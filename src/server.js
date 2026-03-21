@@ -33,14 +33,8 @@ const oauthPendingStates = new Map();
  * 生成 PKCE code_verifier（43-128 字符的随机字符串）
  */
 function generateCodeVerifier() {
-  // RFC 7636 字符集：字母数字 + -._~（与 sub2api 保持一致）
-  const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
-  const bytes = randomBytes(64);
-  let result = '';
-  for (let i = 0; i < 32; i++) {
-    result += charset[bytes[i] % charset.length];
-  }
-  return result;
+  // 跟 claude-code-login 项目一致
+  return randomBytes(32).toString('base64url');
 }
 
 /**
@@ -54,8 +48,8 @@ function generateCodeChallenge(verifier) {
 // 从 Claude Code 源码中提取的公开值，可通过环境变量覆盖
 const OAUTH_CLIENT_ID = process.env.CLAUDE_BRIDGE_OAUTH_CLIENT_ID || '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const OAUTH_AUTHORIZE_URL = 'https://claude.ai/oauth/authorize';
-const OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
-const OAUTH_REDIRECT_URI = 'https://platform.claude.com/oauth/code/callback';
+const OAUTH_TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token';
+const OAUTH_REDIRECT_URI = 'https://console.anthropic.com/oauth/code/callback';
 const OAUTH_SCOPES_FULL = 'org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers';
 // OAuth scopes - 与 Claude Code 保持一致
 const OAUTH_SCOPES = 'user:inference user:profile';
