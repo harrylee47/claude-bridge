@@ -48,8 +48,8 @@ function generateCodeChallenge(verifier) {
 // 从 Claude Code 源码中提取的公开值，可通过环境变量覆盖
 const OAUTH_CLIENT_ID = process.env.CLAUDE_BRIDGE_OAUTH_CLIENT_ID || '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const OAUTH_AUTHORIZE_URL = 'https://claude.ai/oauth/authorize';
-const OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
-const OAUTH_REDIRECT_URI = 'https://platform.claude.com/oauth/code/callback';
+const OAUTH_TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token';
+const OAUTH_REDIRECT_URI = 'https://console.anthropic.com/oauth/code/callback';
 const OAUTH_SCOPES_FULL = 'org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers';
 // OAuth scopes - 与 Claude Code 保持一致
 const OAUTH_SCOPES = 'user:inference user:profile';
@@ -464,22 +464,22 @@ export async function createServer(config = {}) {
         authCode = code.split('#')[0];
       }
 
-      const reqBody = {
+      const reqBody = new URLSearchParams({
         grant_type: 'authorization_code',
         code: authCode,
         redirect_uri: OAUTH_REDIRECT_URI,
         client_id: OAUTH_CLIENT_ID,
         code_verifier: pending.codeVerifier,
-      };
+      });
 
       const fetchOptions = {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json, text/plain, */*',
-          'User-Agent': 'axios/1.8.4',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0',
         },
-        body: JSON.stringify(reqBody),
+        body: reqBody.toString(),
       };
 
       // 如果有代理配置，用代理换 token
@@ -577,14 +577,17 @@ export async function createServer(config = {}) {
       // 如果有代理配置，用代理发请求
       const fetchOptions = {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/json',
+        },
+        body: new URLSearchParams({
           grant_type: 'authorization_code',
           code,
           redirect_uri: pending.redirectUri,
           client_id: OAUTH_CLIENT_ID,
           code_verifier: pending.codeVerifier,
-        }),
+        }).toString(),
       };
 
       if (proxyUrl) {
