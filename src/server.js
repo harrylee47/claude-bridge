@@ -62,7 +62,7 @@ async function curlTokenExchange(body, proxyUrl) {
     `-H "Content-Type: application/json" ` +
     `-H "anthropic-beta: oauth-2025-04-20" ` +
     `-H "anthropic-version: 2023-06-01" ` +
-    `-H "User-Agent: axios/1.8.4" ` +
+    
     `-d '${bodyStr}'`;
   if (proxyUrl) {
     cmd += ` --proxy "${proxyUrl}"`;
