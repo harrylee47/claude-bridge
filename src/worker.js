@@ -27,7 +27,7 @@ function createProxyAgent(proxyUrl) {
 
 // OAuth client_id（与 server.js 保持一致）
 const OAUTH_CLIENT_ID = process.env.CLAUDE_BRIDGE_OAUTH_CLIENT_ID || '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
-const OAUTH_TOKEN_URL = 'https://claude.ai/oauth/token';
+const OAUTH_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
 
 /**
  * 刷新 OAuth token
@@ -79,8 +79,21 @@ async function refreshOAuthToken() {
       ? Math.floor(Date.now() / 1000) + expires_in
       : 0;
 
-    // 重新初始化 SDK 客户端（确保代理生效）
-    const options = { apiKey: access_token };
+    // 重新初始化 SDK 客户端（确保代理和指纹生效）
+    const fpR = accountConfig.fingerprint || {};
+    const ccVR = fpR.ccVersion || '2.1.78';
+    const options = {
+      apiKey: access_token,
+      defaultHeaders: {
+        'user-agent': `claude-cli/${ccVR} (external, cli)`,
+        'x-stainless-lang': 'js',
+        'x-stainless-package-version': '0.70.0',
+        'x-stainless-os': fpR.os || 'macOS',
+        'x-stainless-arch': fpR.arch || 'arm64',
+        'x-stainless-runtime': 'node',
+        'x-stainless-runtime-version': fpR.node || 'v22.14.0',
+      },
+    };
     if (accountConfig.proxy) {
       const agent = createProxyAgent(accountConfig.proxy);
       if (agent) {
@@ -146,6 +159,19 @@ function initClient(config) {
     apiKey: config.token,
   };
 
+  // 应用指纹到请求头
+  const fp = config.fingerprint || {};
+  const ccVersion = fp.ccVersion || '2.1.78';
+  options.defaultHeaders = {
+    'user-agent': `claude-cli/${ccVersion} (external, cli)`,
+    'x-stainless-lang': 'js',
+    'x-stainless-package-version': '0.70.0',
+    'x-stainless-os': fp.os || 'macOS',
+    'x-stainless-arch': fp.arch || 'arm64',
+    'x-stainless-runtime': 'node',
+    'x-stainless-runtime-version': fp.node || 'v22.14.0',
+  };
+
   // 设置代理：用 custom fetch 确保代理一定生效
   if (config.proxy) {
     const agent = createProxyAgent(config.proxy);
@@ -186,8 +212,12 @@ function startHeartbeat(interval) {
  */
 async function doHeartbeat() {
   try {
-    // 使用 models list 作为心跳检测
-    await client.models.list({ limit: 1 });
+    // 用最小的 messages 请求作为心跳（消耗极少 token）
+    await client.messages.create({
+      model: 'claude-haiku-4-5-20241022',
+      max_tokens: 1,
+      messages: [{ role: 'user', content: '.' }],
+    });
     send({ type: 'heartbeat', status: 'online', message: 'OK' });
   } catch (err) {
     const status = err.status === 401 ? 'error' : 'offline';
@@ -348,8 +378,12 @@ async function handleStreamRequest(id, body) {
  */
 async function testConnection(id) {
   try {
-    await client.models.list({ limit: 1 });
-    send({ type: 'test_result', id, success: true, message: '连接正常' });
+    const testResp = await client.messages.create({
+      model: 'claude-haiku-4-5-20241022',
+      max_tokens: 1,
+      messages: [{ role: 'user', content: '.' }],
+    });
+    send({ type: 'test_result', id, success: true, message: `连接正常 (model: ${testResp.model})` });
   } catch (err) {
     send({
       type: 'test_result', id, success: false,

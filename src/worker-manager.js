@@ -104,6 +104,7 @@ class WorkerManager extends EventEmitter {
           os: account.fingerprint_os,
           arch: account.fingerprint_arch,
           node: account.fingerprint_node,
+          ccVersion: account.fingerprint_cc_version || '2.1.78',
         },
       },
     });
