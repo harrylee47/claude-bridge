@@ -441,7 +441,7 @@ export async function createServer(config = {}) {
    * 用户复制 platform.claude.com 页面显示的 code，粘贴回来换取 token
    */
   app.post('/api/oauth/exchange', { preHandler: adminAuth }, async (request) => {
-    const { code, state } = request.body || {};
+    const { code, state, proxy } = request.body || {};
     if (!code || !state) {
       return { error: '缺少 code 或 state' };
     }
@@ -450,6 +450,9 @@ export async function createServer(config = {}) {
     if (!pending) {
       return { error: 'state 无效或已过期，请重新获取授权链接' };
     }
+
+    // 优先用请求 body 里的代理（点添加时传来的最终代理），fallback 到生成链接时的代理
+    const proxyUrl = proxy || pending.proxy || '';
 
     oauthPendingStates.delete(state);
 
@@ -467,13 +470,13 @@ export async function createServer(config = {}) {
       };
 
       // 如果有代理配置，用代理换 token
-      if (pending.proxy) {
+      if (proxyUrl) {
         try {
-          const ProxyAgent = pending.proxy.startsWith('socks')
+          const ProxyAgent = proxyUrl.startsWith('socks')
             ? (await import('socks-proxy-agent')).SocksProxyAgent
             : (await import('https-proxy-agent')).HttpsProxyAgent;
-          fetchOptions.agent = new ProxyAgent(pending.proxy);
-          logger.info({ proxy: pending.proxy }, 'OAuth code 交换使用代理');
+          fetchOptions.agent = new ProxyAgent(proxyUrl);
+          logger.info({ proxy: proxyUrl }, 'OAuth code 交换使用代理');
         } catch (e) {
           logger.warn({ err: e.message }, '代理创建失败，直连');
         }
@@ -569,15 +572,15 @@ export async function createServer(config = {}) {
         }),
       };
 
-      if (pending.proxy) {
-        const { default: createProxyAgent } = pending.proxy.startsWith('socks')
+      if (proxyUrl) {
+        const { default: createProxyAgent } = proxyUrl.startsWith('socks')
           ? await import('socks-proxy-agent')
           : await import('https-proxy-agent');
-        const ProxyAgent = pending.proxy.startsWith('socks') 
+        const ProxyAgent = proxyUrl.startsWith('socks') 
           ? (await import('socks-proxy-agent')).SocksProxyAgent
           : (await import('https-proxy-agent')).HttpsProxyAgent;
-        fetchOptions.agent = new ProxyAgent(pending.proxy);
-        logger.info({ proxy: pending.proxy }, 'OAuth token 交换使用代理');
+        fetchOptions.agent = new ProxyAgent(proxyUrl);
+        logger.info({ proxy: proxyUrl }, 'OAuth token 交换使用代理');
       }
 
       // 用 code + code_verifier 换取 token

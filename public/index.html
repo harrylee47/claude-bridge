@@ -662,13 +662,14 @@
           <div>
             <div class="flex items-center justify-between mb-1">
               <label class="block text-xs text-gray-500">Token</label>
-              <button v-if="accountForm.token_type === 'oauth'" @click="generateOAuthLink"
+              <button v-if="accountForm.token_type === 'oauth' && !accountForm.token" @click="generateOAuthLink"
                 class="text-xs text-emerald-400 hover:text-emerald-300 transition flex items-center gap-1">
                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
                 获取授权链接
               </button>
             </div>
-            <textarea v-model="accountForm.token" rows="3" class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none resize-none" :placeholder="accountForm.token_type === 'oauth' ? '点击上方「获取授权链接」，授权后将 Token 粘贴到这里' : '粘贴你的 Session Key (Cookie)'"></textarea>
+            <textarea v-if="accountForm.token_type === 'session_key'" v-model="accountForm.token" rows="3" class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none resize-none" placeholder="粘贴你的 Session Key (Cookie)"></textarea>
+            <div v-else-if="accountForm.token" class="w-full bg-panel-bg border border-emerald-500/30 rounded-lg px-3 py-2 text-sm text-emerald-400 font-mono break-all">✅ Token 已获取</div>
             <!-- Session Key 获取说明 -->
             <div v-if="accountForm.token_type === 'session_key'" class="mt-2 bg-panel-bg border border-panel-border rounded-lg p-3">
               <p class="text-xs text-gray-400 font-medium mb-2">📝 如何获取 Session Key：</p>
@@ -683,7 +684,7 @@
               <p class="text-xs text-yellow-500/80 mt-2">⚠️ Session Key 通常几天~两周过期，需定期更新</p>
             </div>
             <!-- OAuth 授权链接显示区 -->
-            <div v-if="oauthLinkUrl" class="mt-2 bg-panel-bg border border-emerald-500/30 rounded-lg p-3 space-y-3">
+            <div v-if="oauthLinkUrl && !accountForm.token" class="mt-2 bg-panel-bg border border-emerald-500/30 rounded-lg p-3 space-y-3">
               <p class="text-xs text-gray-400">第 1 步：复制链接到已登录 Claude 的浏览器中打开</p>
               <p class="text-xs text-emerald-400 font-mono break-all select-all leading-relaxed">{{ oauthLinkUrl }}</p>
               <button @click="copyOAuthLink" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-md transition flex items-center gap-1">
@@ -692,11 +693,9 @@
               </button>
               <hr class="border-panel-border">
               <p class="text-xs text-gray-400">第 2 步：授权后页面会显示一个 Code，粘贴到下方</p>
-              <div class="flex gap-2">
-                <input v-model="oauthCode" class="flex-1 bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none font-mono" placeholder="粘贴授权 Code">
-                <button @click="exchangeOAuthCode" :disabled="!oauthCode || oauthExchanging" class="bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-700 text-white px-4 py-2 rounded-lg text-xs font-medium transition">
-                  {{ oauthExchanging ? '交换中...' : '获取 Token' }}
-                </button>
+              <div class="relative">
+                <input v-model="oauthCode" @paste="onOAuthCodePaste" class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none font-mono" :placeholder="oauthExchanging ? '正在获取 Token...' : '粘贴授权 Code，自动获取 Token'">
+                <div v-if="oauthExchanging" class="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400 text-xs animate-pulse">获取中...</div>
               </div>
             </div>
           </div>
@@ -1242,10 +1241,39 @@ API Key: ${key}
 
     async function saveAccount() {
       try {
-        if (!accountForm.token) {
-          showToast('Token 不能为空', 'error');
+        // OAuth 模式：需要先用 code 交换 token
+        if (accountForm.token_type === 'oauth' && !editingAccount.value) {
+          if (!oauthCode.value || !oauthState.value) {
+            showToast('请先获取授权链接并粘贴 Code', 'error');
+            return;
+          }
+          if (!accountForm.proxy) {
+            if (!confirm('⚠️ 未配置代理！Token 交换将使用本机 IP。\n确定继续？')) return;
+          }
+          showToast('正在交换 Token...', 'info');
+          const exchangeResult = await api('POST', '/api/oauth/exchange', {
+            code: oauthCode.value.trim(),
+            state: oauthState.value,
+            proxy: accountForm.proxy || '',
+          });
+          if (exchangeResult.error) {
+            showToast('Token 交换失败: ' + exchangeResult.error, 'error');
+            return;
+          }
+          if (!exchangeResult.token) {
+            showToast('Token 交换失败: 未获取到 Token', 'error');
+            return;
+          }
+          accountForm.token = exchangeResult.token;
+          accountForm.auth_type = 'oauth';
+        }
+
+        // Session Key 模式
+        if (accountForm.token_type === 'session_key' && !accountForm.token) {
+          showToast('请粘贴 Session Key', 'error');
           return;
         }
+
         if (editingAccount.value) {
           await api('PUT', `/api/accounts/${editingAccount.value.id}`, accountForm);
           showToast('账号已更新', 'success');
@@ -1254,9 +1282,14 @@ API Key: ${key}
           showToast('账号已添加', 'success');
         }
         showAccountModal.value = false;
+        oauthLinkUrl.value = '';
+        oauthCode.value = '';
+        oauthState.value = '';
         loadAccounts();
         loadOverview();
-      } catch (err) {}
+      } catch (err) {
+        showToast('操作失败: ' + (err.message || ''), 'error');
+      }
     }
 
     async function toggleAccount(acc) {
@@ -1308,6 +1341,9 @@ API Key: ${key}
     async function generateOAuthLink() {
       try {
         const proxy = accountForm.proxy || '';
+        if (!proxy) {
+          if (!confirm('⚠️ 未配置代理！换取 Token 时将使用本机 IP 直连 Anthropic。\n\n建议先填写代理地址再获取授权链接。\n\n确定继续？')) return;
+        }
         const query = proxy ? `?proxy=${encodeURIComponent(proxy)}` : '';
         const result = await api('GET', `/api/oauth/start${query}`);
         if (result && result.url) {
@@ -1321,30 +1357,13 @@ API Key: ${key}
       }
     }
 
-    async function exchangeOAuthCode() {
-      if (!oauthCode.value || !oauthState.value) return;
-      oauthExchanging.value = true;
-      try {
-        const result = await api('POST', '/api/oauth/exchange', {
-          code: oauthCode.value.trim(),
-          state: oauthState.value,
-        });
-        if (result.error) {
-          showToast('交换失败: ' + result.error, 'error');
-          return;
+    function onOAuthCodePaste() {
+      // 粘贴后显示确认
+      setTimeout(() => {
+        if (oauthCode.value && oauthCode.value.trim().length > 5) {
+          showToast('Code 已填入，请配置好代理和指纹后点击「添加」', 'success');
         }
-        if (result.token) {
-          accountForm.token = result.token;
-          accountForm.auth_type = 'oauth';
-          oauthLinkUrl.value = '';
-          oauthCode.value = '';
-          showToast('Token 获取成功！已自动填入', 'success');
-        }
-      } catch (err) {
-        showToast('交换失败: ' + (err.message || ''), 'error');
-      } finally {
-        oauthExchanging.value = false;
-      }
+      }, 100);
     }
 
     function copyOAuthLink() {
@@ -1678,7 +1697,7 @@ API Key: ${key}
       totalTodayTokens, maxDailyRequests, maxDailyTokens, maxAccountRequests,
       filteredLogs,
       login, logout, loadUsage,
-      startOAuth, copyOAuthUrl, oauthLinkUrl, oauthCode, oauthExchanging, generateOAuthLink, copyOAuthLink, exchangeOAuthCode,
+      startOAuth, copyOAuthUrl, oauthLinkUrl, oauthCode, oauthExchanging, generateOAuthLink, copyOAuthLink, onOAuthCodePaste,
       openAddAccount, openEditAccount, saveAccount, toggleAccount,
       testAccount, restartAccount, confirmDeleteAccount, doDeleteAccount,
       parseProxyUrl, buildProxyUrl, checkProxy, onProxyPortChange,
