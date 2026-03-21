@@ -325,12 +325,17 @@ class WorkerManager extends EventEmitter {
 
       case 'token_refreshed': {
         // Worker 刷新了 OAuth token，更新数据库
-        dbUpdateAccount(accountId, {
+        const updateData = {
           token: msg.token,
           refresh_token: msg.refreshToken,
           token_expires_at: msg.tokenExpiresAt,
-        });
-        logger.info({ accountId }, 'OAuth token 已刷新并更新到数据库');
+        };
+        // 如果 Session Key 转换为 OAuth，更新 auth_type
+        if (msg.authType) {
+          updateData.auth_type = msg.authType;
+        }
+        dbUpdateAccount(accountId, updateData);
+        logger.info({ accountId, authType: msg.authType || 'oauth' }, 'OAuth token 已刷新并更新到数据库');
         break;
       }
 
