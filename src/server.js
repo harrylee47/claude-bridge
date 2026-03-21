@@ -69,7 +69,12 @@ async function curlTokenExchange(body, proxyUrl) {
   }
   logger.info({ proxy: proxyUrl || 'direct' }, 'OAuth token 交换 (curl)');
   const result = execSync(cmd, { encoding: 'utf8', timeout: 30000 });
-  return JSON.parse(result);
+  logger.info({ curlResponse: result.substring(0, 500) }, 'curl 返回结果');
+  const parsed = JSON.parse(result);
+  if (parsed.error) {
+    throw new Error(`Anthropic API 错误: ${parsed.error?.message || JSON.stringify(parsed.error)}`);
+  }
+  return parsed;
 }
 // OAuth scopes - 与 Claude Code 保持一致
 const OAUTH_SCOPES = 'user:inference user:profile';
