@@ -33,7 +33,14 @@ const oauthPendingStates = new Map();
  * 生成 PKCE code_verifier（43-128 字符的随机字符串）
  */
 function generateCodeVerifier() {
-  return randomBytes(32).toString('base64url');
+  // RFC 7636 字符集：字母数字 + -._~（与 sub2api 保持一致）
+  const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+  const bytes = randomBytes(64);
+  let result = '';
+  for (let i = 0; i < 32; i++) {
+    result += charset[bytes[i] % charset.length];
+  }
+  return result;
 }
 
 /**
