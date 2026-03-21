@@ -464,22 +464,22 @@ export async function createServer(config = {}) {
         authCode = code.split('#')[0];
       }
 
-      const reqBody = new URLSearchParams({
+      const reqBody = {
         grant_type: 'authorization_code',
         code: authCode,
         redirect_uri: OAUTH_REDIRECT_URI,
         client_id: OAUTH_CLIENT_ID,
         code_verifier: pending.codeVerifier,
-      });
+      };
 
       const fetchOptions = {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json, text/plain, */*',
+          'User-Agent': 'axios/1.8.4',
         },
-        body: reqBody.toString(),
+        body: JSON.stringify(reqBody),
       };
 
       // 如果有代理配置，用代理换 token
@@ -578,16 +578,17 @@ export async function createServer(config = {}) {
       const fetchOptions = {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json, text/plain, */*',
+          'User-Agent': 'axios/1.8.4',
         },
-        body: new URLSearchParams({
+        body: JSON.stringify({
           grant_type: 'authorization_code',
           code,
           redirect_uri: pending.redirectUri,
           client_id: OAUTH_CLIENT_ID,
           code_verifier: pending.codeVerifier,
-        }).toString(),
+        }),
       };
 
       if (proxyUrl) {
