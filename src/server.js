@@ -457,16 +457,28 @@ export async function createServer(config = {}) {
     oauthPendingStates.delete(state);
 
     try {
+      // code 可能包含 #state，需要分割
+      let authCode = code;
+      if (code.includes('#')) {
+        authCode = code.split('#')[0];
+      }
+
+      const reqBody = {
+        grant_type: 'authorization_code',
+        code: authCode,
+        redirect_uri: OAUTH_REDIRECT_URI,
+        client_id: OAUTH_CLIENT_ID,
+        code_verifier: pending.codeVerifier,
+      };
+
       const fetchOptions = {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          grant_type: 'authorization_code',
-          code,
-          redirect_uri: OAUTH_REDIRECT_URI,
-          client_id: OAUTH_CLIENT_ID,
-          code_verifier: pending.codeVerifier,
-        }),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json, text/plain, */*',
+          'User-Agent': 'axios/1.8.4',
+        },
+        body: JSON.stringify(reqBody),
       };
 
       // 如果有代理配置，用代理换 token
@@ -482,6 +494,7 @@ export async function createServer(config = {}) {
         }
       }
 
+      logger.info({ tokenUrl: OAUTH_TOKEN_URL }, 'OAuth 交换 token');
       const tokenResponse = await nodeFetch(OAUTH_TOKEN_URL, fetchOptions);
 
       if (!tokenResponse.ok) {
