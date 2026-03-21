@@ -1,0 +1,1702 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Bridge - 管理面板</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+          colors: {
+            panel: {
+              bg: '#0f1117',
+              card: '#1a1d27',
+              border: '#2a2d3a',
+              hover: '#22252f',
+              active: '#272b38',
+            },
+            accent: {
+              DEFAULT: '#6366f1',
+              light: '#818cf8',
+              dark: '#4f46e5',
+            },
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    [v-cloak] { display: none; }
+    * { scrollbar-width: thin; scrollbar-color: #2a2d3a #0f1117; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f1117; }
+    ::-webkit-scrollbar-thumb { background: #2a2d3a; border-radius: 3px; }
+    body { background: #0f1117; font-family: 'Inter', system-ui, sans-serif; }
+
+    /* 状态指示灯动画 */
+    @keyframes pulse-online { 0%,100% { opacity:1; } 50% { opacity:.5; } }
+    .status-dot-online { animation: pulse-online 2s ease-in-out infinite; }
+
+    /* 过渡 */
+    .fade-enter-active, .fade-leave-active { transition: opacity .2s; }
+    .fade-enter-from, .fade-leave-to { opacity: 0; }
+
+    /* toast */
+    .toast-enter-active { transition: all .3s ease; }
+    .toast-leave-active { transition: all .2s ease; }
+    .toast-enter-from { transform: translateX(100%); opacity: 0; }
+    .toast-leave-to { transform: translateX(100%); opacity: 0; }
+
+    /* 日志颜色 */
+    .log-info { color: #60a5fa; }
+    .log-warn { color: #fbbf24; }
+    .log-error { color: #f87171; }
+    .log-debug { color: #a78bfa; }
+  </style>
+</head>
+<body class="bg-panel-bg text-gray-200 min-h-screen">
+
+<div id="app" v-cloak>
+  <!-- ============ 登录页面 ============ -->
+  <div v-if="!authenticated" class="min-h-screen flex items-center justify-center p-4">
+    <div class="bg-panel-card border border-panel-border rounded-2xl p-8 w-full max-w-sm shadow-2xl">
+      <div class="text-center mb-8">
+        <div class="w-16 h-16 bg-accent/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <svg class="w-8 h-8 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+          </svg>
+        </div>
+        <h1 class="text-xl font-bold text-white">Claude Bridge</h1>
+        <p class="text-gray-500 text-sm mt-1">多账号 API 中转管理</p>
+      </div>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm text-gray-400 mb-1.5">管理员 Token</label>
+          <input v-model="loginToken" type="password" @keyup.enter="login"
+            class="w-full bg-panel-bg border border-panel-border rounded-lg px-4 py-2.5 text-sm focus:border-accent focus:outline-none transition"
+            placeholder="输入管理员 Token">
+        </div>
+        <button @click="login" class="w-full bg-accent hover:bg-accent-dark text-white rounded-lg py-2.5 text-sm font-medium transition">
+          登 录
+        </button>
+        <p v-if="loginError" class="text-red-400 text-xs text-center">{{ loginError }}</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 主界面 ============ -->
+  <div v-else class="flex min-h-screen">
+    <!-- 桌面端侧边栏 -->
+    <aside class="hidden md:flex flex-col w-56 bg-panel-card border-r border-panel-border fixed h-full z-30">
+      <!-- Logo -->
+      <div class="px-5 py-5 border-b border-panel-border">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 bg-accent/10 rounded-xl flex items-center justify-center">
+            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+          </div>
+          <div>
+            <div class="text-sm font-bold text-white">Claude Bridge</div>
+            <div class="text-[10px] text-gray-500">v1.0.0</div>
+          </div>
+        </div>
+      </div>
+      <!-- 导航 -->
+      <nav class="flex-1 p-3 space-y-1">
+        <button v-for="item in navItems" :key="item.key"
+          @click="currentPage = item.key"
+          :class="['w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all',
+            currentPage === item.key ? 'bg-accent/10 text-accent font-medium' : 'text-gray-400 hover:bg-panel-hover hover:text-gray-200']">
+          <span v-html="item.icon" class="w-5 h-5 flex-shrink-0"></span>
+          <span>{{ item.label }}</span>
+        </button>
+      </nav>
+      <!-- 底部 -->
+      <div class="p-3 border-t border-panel-border">
+        <button @click="logout" class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-500 hover:text-red-400 hover:bg-red-400/5 transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+          退出登录
+        </button>
+      </div>
+    </aside>
+
+    <!-- 移动端顶部标签栏 -->
+    <div class="md:hidden fixed top-0 left-0 right-0 z-30 bg-panel-card border-b border-panel-border">
+      <div class="flex items-center justify-between px-4 py-3">
+        <div class="flex items-center gap-2">
+          <div class="w-7 h-7 bg-accent/10 rounded-lg flex items-center justify-center">
+            <svg class="w-4 h-4 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+          </div>
+          <span class="text-sm font-bold text-white">Claude Bridge</span>
+        </div>
+        <button @click="logout" class="text-gray-500 hover:text-red-400 p-1">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+        </button>
+      </div>
+      <div class="flex overflow-x-auto px-2 pb-2 gap-1">
+        <button v-for="item in navItems" :key="item.key"
+          @click="currentPage = item.key"
+          :class="['flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs whitespace-nowrap transition-all flex-shrink-0',
+            currentPage === item.key ? 'bg-accent/10 text-accent font-medium' : 'text-gray-400 hover:bg-panel-hover']">
+          <span v-html="item.icon" class="w-4 h-4 flex-shrink-0"></span>
+          {{ item.label }}
+        </button>
+      </div>
+    </div>
+
+    <!-- 主内容区 -->
+    <main class="flex-1 md:ml-56 mt-[88px] md:mt-0 p-4 md:p-6 max-w-[1400px]">
+
+      <!-- ======== 概览页 ======== -->
+      <div v-if="currentPage === 'overview'">
+        <h2 class="text-lg font-bold text-white mb-5">概览</h2>
+
+        <!-- 系统信息卡片 -->
+        <div class="bg-panel-card border border-panel-border rounded-xl p-5 mb-6">
+          <h3 class="text-sm font-medium text-gray-400 mb-4 flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            系统信息
+          </h3>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div class="flex items-center justify-between bg-panel-bg rounded-lg px-4 py-3 border border-panel-border/50">
+              <div>
+                <div class="text-[10px] text-gray-500 mb-0.5">Base URL</div>
+                <div class="text-sm text-accent font-mono">{{ baseUrl }}</div>
+              </div>
+              <button @click="copyToClipboard(baseUrl)" class="text-gray-500 hover:text-gray-300 transition p-1" title="复制">📋</button>
+            </div>
+            <div class="flex items-center justify-between bg-panel-bg rounded-lg px-4 py-3 border border-panel-border/50">
+              <div>
+                <div class="text-[10px] text-gray-500 mb-0.5">API 格式</div>
+                <div class="text-sm text-gray-200">Anthropic 兼容</div>
+              </div>
+              <button @click="copyToClipboard('Anthropic 兼容')" class="text-gray-500 hover:text-gray-300 transition p-1" title="复制">📋</button>
+            </div>
+            <div class="flex items-center justify-between bg-panel-bg rounded-lg px-4 py-3 border border-panel-border/50">
+              <div>
+                <div class="text-[10px] text-gray-500 mb-0.5">服务版本</div>
+                <div class="text-sm text-gray-200">{{ overview.version || '1.0.0' }}</div>
+              </div>
+              <button @click="copyToClipboard(overview.version || '1.0.0')" class="text-gray-500 hover:text-gray-300 transition p-1" title="复制">📋</button>
+            </div>
+            <div class="flex items-center justify-between bg-panel-bg rounded-lg px-4 py-3 border border-panel-border/50">
+              <div>
+                <div class="text-[10px] text-gray-500 mb-0.5">运行时间</div>
+                <div class="text-sm text-gray-200">{{ overview.uptime || '-' }}</div>
+              </div>
+              <button @click="copyToClipboard(overview.uptime || '')" class="text-gray-500 hover:text-gray-300 transition p-1" title="复制">📋</button>
+            </div>
+            <div class="flex items-center justify-between bg-panel-bg rounded-lg px-4 py-3 border border-panel-border/50 sm:col-span-2 lg:col-span-2">
+              <div>
+                <div class="text-[10px] text-gray-500 mb-0.5">Claude Code 最新版本</div>
+                <div class="flex items-center gap-2">
+                  <span class="text-sm text-gray-200">{{ overview.latestClaudeCodeVersion || '检查中...' }}</span>
+                  <span v-if="overview.latestClaudeCodeVersion && isNewerVersion(overview.latestClaudeCodeVersion)" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-400/10 text-green-400 font-medium">🆕 有新版本</span>
+                </div>
+              </div>
+              <button @click="copyToClipboard(overview.latestClaudeCodeVersion || '')" class="text-gray-500 hover:text-gray-300 transition p-1" title="复制">📋</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 统计卡片 -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6">
+          <div class="bg-panel-card border border-panel-border rounded-xl p-4">
+            <div class="text-xs text-gray-500 mb-1">在线账号</div>
+            <div class="text-2xl font-bold text-green-400">{{ overview.accounts?.online || 0 }}
+              <span class="text-sm text-gray-500 font-normal">/ {{ overview.accounts?.total || 0 }}</span>
+            </div>
+          </div>
+          <div class="bg-panel-card border border-panel-border rounded-xl p-4">
+            <div class="text-xs text-gray-500 mb-1">活跃请求</div>
+            <div class="text-2xl font-bold text-blue-400">{{ overview.activeRequests || 0 }}</div>
+          </div>
+          <div class="bg-panel-card border border-panel-border rounded-xl p-4">
+            <div class="text-xs text-gray-500 mb-1">今日请求</div>
+            <div class="text-2xl font-bold text-amber-400">{{ overview.today?.requests || 0 }}</div>
+          </div>
+          <div class="bg-panel-card border border-panel-border rounded-xl p-4">
+            <div class="text-xs text-gray-500 mb-1">今日 Tokens</div>
+            <div class="text-2xl font-bold text-purple-400">{{ formatTokens(totalTodayTokens) }}</div>
+          </div>
+        </div>
+
+        <!-- 账号状态卡片 -->
+        <h3 class="text-sm font-medium text-gray-400 mb-3">账号状态</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div v-for="card in overview.accountCards" :key="card.id"
+            class="bg-panel-card border border-panel-border rounded-xl p-4 hover:border-panel-hover transition">
+            <div class="flex items-center justify-between mb-3">
+              <div class="flex items-center gap-2">
+                <span :class="['w-2 h-2 rounded-full', statusColor(card.status)]"
+                  :title="card.status"></span>
+                <span class="text-sm font-medium text-white">{{ card.name }}</span>
+              </div>
+              <span :class="['text-xs px-2 py-0.5 rounded-full', statusBadge(card.status)]">
+                {{ statusText(card.status) }}
+              </span>
+            </div>
+            <div class="grid grid-cols-3 gap-2 text-xs">
+              <div>
+                <div class="text-gray-500">代理</div>
+                <div class="text-gray-300">{{ card.proxy }}</div>
+              </div>
+              <div>
+                <div class="text-gray-500">并发</div>
+                <div class="text-gray-300">{{ card.concurrent }}</div>
+              </div>
+              <div>
+                <div class="text-gray-500">RPM</div>
+                <div class="text-gray-300">{{ card.rpm }}</div>
+              </div>
+            </div>
+            <div class="text-[10px] text-gray-600 mt-2">
+              心跳: {{ card.lastHeartbeat ? timeAgo(card.lastHeartbeat) : '从未' }}
+            </div>
+          </div>
+          <div v-if="!overview.accountCards?.length"
+            class="col-span-full text-center py-12 text-gray-600 text-sm">
+            暂无账号，请前往账号管理页添加
+          </div>
+        </div>
+      </div>
+
+      <!-- ======== 账号管理页 ======== -->
+      <div v-if="currentPage === 'accounts'">
+        <div class="flex items-center justify-between mb-5">
+          <h2 class="text-lg font-bold text-white">账号管理</h2>
+          <div class="flex items-center gap-2">
+            <button @click="openAddAccount" class="bg-accent hover:bg-accent-dark text-white text-sm px-4 py-2 rounded-lg transition flex items-center gap-1.5">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+              手动添加
+            </button>
+          </div>
+        </div>
+
+        <!-- 账号表格 -->
+        <div class="bg-panel-card border border-panel-border rounded-xl overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-panel-border text-left">
+                  <th class="px-4 py-3 text-xs text-gray-500 font-medium">名称</th>
+                  <th class="px-4 py-3 text-xs text-gray-500 font-medium">状态</th>
+                  <th class="px-4 py-3 text-xs text-gray-500 font-medium hidden md:table-cell">代理</th>
+                  <th class="px-4 py-3 text-xs text-gray-500 font-medium hidden lg:table-cell">限速</th>
+                  <th class="px-4 py-3 text-xs text-gray-500 font-medium hidden lg:table-cell">心跳</th>
+                  <th class="px-4 py-3 text-xs text-gray-500 font-medium text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="acc in accounts" :key="acc.id"
+                  class="border-b border-panel-border/50 hover:bg-panel-hover transition">
+                  <td class="px-4 py-3">
+                    <div class="flex items-center gap-2">
+                      <span :class="['w-2 h-2 rounded-full flex-shrink-0', statusColor(acc.status)]"></span>
+                      <span class="text-white">{{ acc.name || '账号 #' + acc.id }}</span>
+                      <span v-if="acc.auth_type === 'oauth'" class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 flex-shrink-0">OAuth</span>
+                    </div>
+                  </td>
+                  <td class="px-4 py-3">
+                    <span :class="['text-xs px-2 py-0.5 rounded-full', statusBadge(acc.status)]">
+                      {{ statusText(acc.status) }}
+                    </span>
+                  </td>
+                  <td class="px-4 py-3 text-gray-400 hidden md:table-cell text-xs">
+                    {{ acc.proxy || '直连' }}
+                  </td>
+                  <td class="px-4 py-3 text-gray-400 hidden lg:table-cell text-xs">
+                    {{ acc.rpm }} RPM / {{ acc.max_concurrency }} 并发
+                  </td>
+                  <td class="px-4 py-3 text-gray-500 hidden lg:table-cell text-xs">
+                    {{ acc.last_heartbeat ? timeAgo(acc.last_heartbeat) : '-' }}
+                  </td>
+                  <td class="px-4 py-3">
+                    <div class="flex items-center justify-end gap-1">
+                      <button @click="testAccount(acc.id)" :disabled="!acc.enabled"
+                        class="p-1.5 rounded-lg text-gray-400 hover:text-blue-400 hover:bg-blue-400/10 transition disabled:opacity-30"
+                        title="测试连通性">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                      </button>
+                      <button @click="toggleAccount(acc)"
+                        :class="['p-1.5 rounded-lg transition', acc.enabled ? 'text-green-400 hover:text-red-400 hover:bg-red-400/10' : 'text-gray-500 hover:text-green-400 hover:bg-green-400/10']"
+                        :title="acc.enabled ? '禁用' : '启用'">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                      </button>
+                      <button @click="openEditAccount(acc)"
+                        class="p-1.5 rounded-lg text-gray-400 hover:text-amber-400 hover:bg-amber-400/10 transition"
+                        title="编辑">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                      </button>
+                      <button @click="restartAccount(acc.id)" :disabled="!acc.enabled"
+                        class="p-1.5 rounded-lg text-gray-400 hover:text-cyan-400 hover:bg-cyan-400/10 transition disabled:opacity-30"
+                        title="重启">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                      </button>
+                      <button @click="confirmDeleteAccount(acc)"
+                        class="p-1.5 rounded-lg text-gray-400 hover:text-red-400 hover:bg-red-400/10 transition"
+                        title="删除">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-if="!accounts.length">
+                  <td colspan="6" class="px-4 py-12 text-center text-gray-600 text-sm">
+                    暂无账号，点击右上角添加
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ======== 配置页 ======== -->
+      <div v-if="currentPage === 'config'">
+        <h2 class="text-lg font-bold text-white mb-5">系统配置</h2>
+
+        <div class="space-y-4 max-w-2xl">
+          <!-- API Key 管理 -->
+          <div class="bg-panel-card border border-panel-border rounded-xl p-5">
+            <h3 class="text-sm font-medium text-white mb-4">API Key 管理</h3>
+
+            <!-- 添加 Key -->
+            <div class="flex gap-2 mb-4">
+              <input v-model="newKeyName" placeholder="Key 名称（如：开发环境）" class="flex-1 bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none">
+              <button @click="addNewApiKey" class="bg-accent hover:bg-accent-dark text-white px-4 py-2 rounded-lg text-sm transition whitespace-nowrap">🔑 生成</button>
+            </div>
+
+            <!-- Key 列表 -->
+            <div class="space-y-2">
+              <div v-if="apiKeys.length === 0" class="text-gray-500 text-sm text-center py-4">暂无 API Key</div>
+              <div v-for="key in apiKeys" :key="key.id" class="bg-panel-bg rounded-lg px-4 py-3 border border-panel-border/50">
+                <div class="flex items-center justify-between">
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 mb-1">
+                      <span class="text-sm font-medium text-white">{{ key.name || 'unnamed' }}</span>
+                      <span class="text-xs text-gray-500">{{ formatTime(key.created_at) }}</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <code class="text-xs font-mono" :class="keyVisibility[key.id] ? 'text-accent' : 'text-gray-500'">{{ keyVisibility[key.id] ? key.key : maskKeyLong(key.key) }}</code>
+                      <button @click="toggleKeyVisibility(key.id)" class="text-gray-500 hover:text-gray-300 transition text-xs" :title="keyVisibility[key.id] ? '隐藏' : '显示'">👁</button>
+                      <button @click="copyToClipboard(key.key)" class="text-gray-500 hover:text-gray-300 transition text-xs" title="复制">📋</button>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2 ml-3 flex-shrink-0">
+                    <button @click="showUsageModal(key)" class="text-xs px-2 py-1 rounded-md bg-purple-400/10 text-purple-400 hover:bg-purple-400/20 transition">📖 使用</button>
+                    <button @click="openAllowedAccountsEditor(key)" class="text-xs px-2 py-1 rounded-md transition" :class="key.allowed_accounts === '*' ? 'bg-green-400/10 text-green-400 hover:bg-green-400/20' : 'bg-blue-400/10 text-blue-400 hover:bg-blue-400/20'">
+                      {{ key.allowed_accounts === '*' ? '全部账号' : '指定账号' }}
+                    </button>
+                    <button @click="confirmDeleteKey(key)" class="text-gray-500 hover:text-red-400 transition text-sm" title="删除">🗑</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 新 Key 弹窗 -->
+          <div v-if="showNewKeyModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" @click.self="showNewKeyModal = false">
+            <div class="bg-panel-card border border-panel-border rounded-2xl p-6 w-full max-w-lg mx-4 shadow-2xl">
+              <h3 class="text-lg font-bold text-white mb-2">🔑 Key 已生成</h3>
+              <p class="text-sm text-amber-400 mb-4">⚠️ 此 Key 仅显示一次，请立即复制保存！</p>
+              <div class="bg-panel-bg rounded-lg p-3 mb-4 border border-accent/30">
+                <code class="text-sm text-accent font-mono break-all select-all">{{ newGeneratedKey }}</code>
+              </div>
+              <div class="flex gap-2 justify-end">
+                <button @click="copyToClipboard(newGeneratedKey)" class="bg-accent hover:bg-accent-dark text-white px-4 py-2 rounded-lg text-sm transition">📋 复制</button>
+                <button @click="showNewKeyModal = false" class="bg-panel-bg hover:bg-panel-border text-gray-300 px-4 py-2 rounded-lg text-sm transition border border-panel-border">关闭</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 允许账号编辑弹窗 -->
+          <div v-if="showAllowedAccountsModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" @click.self="showAllowedAccountsModal = false">
+            <div class="bg-panel-card border border-panel-border rounded-2xl p-6 w-full max-w-md mx-4 shadow-2xl">
+              <h3 class="text-lg font-bold text-white mb-4">选择允许的账号</h3>
+              <div class="space-y-2 mb-4 max-h-60 overflow-y-auto">
+                <label class="flex items-center gap-2 bg-panel-bg rounded-lg px-3 py-2 cursor-pointer hover:bg-panel-border/30 transition">
+                  <input type="checkbox" v-model="allowAllAccounts" @change="onAllowAllChange" class="accent-green-500">
+                  <span class="text-sm text-white">全部账号</span>
+                </label>
+                <label v-for="acc in accounts" :key="acc.id" class="flex items-center gap-2 bg-panel-bg rounded-lg px-3 py-2 cursor-pointer hover:bg-panel-border/30 transition">
+                  <input type="checkbox" :value="acc.id" v-model="selectedAllowedAccounts" @change="onAccountSelectChange" class="accent-blue-500">
+                  <span class="text-sm text-gray-300">{{ acc.name || '账号 #' + acc.id }}</span>
+                </label>
+              </div>
+              <div class="flex gap-2 justify-end">
+                <button @click="saveAllowedAccounts" class="bg-accent hover:bg-accent-dark text-white px-4 py-2 rounded-lg text-sm transition">保存</button>
+                <button @click="showAllowedAccountsModal = false" class="bg-panel-bg hover:bg-panel-border text-gray-300 px-4 py-2 rounded-lg text-sm transition border border-panel-border">取消</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 删除确认弹窗 -->
+          <div v-if="showDeleteKeyModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" @click.self="showDeleteKeyModal = false">
+            <div class="bg-panel-card border border-panel-border rounded-2xl p-6 w-full max-w-sm mx-4 shadow-2xl">
+              <h3 class="text-lg font-bold text-white mb-2">确认删除</h3>
+              <p class="text-sm text-gray-400 mb-4">确定要删除 Key「{{ deletingKey?.name || 'unnamed' }}」吗？此操作不可撤销。</p>
+              <div class="flex gap-2 justify-end">
+                <button @click="doDeleteKey" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm transition">删除</button>
+                <button @click="showDeleteKeyModal = false" class="bg-panel-bg hover:bg-panel-border text-gray-300 px-4 py-2 rounded-lg text-sm transition border border-panel-border">取消</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 全局配置 -->
+          <div class="bg-panel-card border border-panel-border rounded-xl p-5">
+            <h3 class="text-sm font-medium text-white mb-4">全局配置</h3>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">全局 RPM 上限</label>
+                <input v-model="configForm.global_rpm" type="number"
+                  class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">心跳间隔 (ms)</label>
+                <input v-model="configForm.heartbeat_interval" type="number"
+                  class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">冷却时间 (ms)</label>
+                <input v-model="configForm.cooldown_duration" type="number"
+                  class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">日志级别</label>
+                <select v-model="configForm.log_level"
+                  class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none">
+                  <option value="trace">trace</option>
+                  <option value="debug">debug</option>
+                  <option value="info">info</option>
+                  <option value="warn">warn</option>
+                  <option value="error">error</option>
+                </select>
+              </div>
+              <div class="sm:col-span-2">
+                <label class="block text-xs text-gray-500 mb-1">管理员 Token</label>
+                <input v-model="configForm.admin_token" type="text"
+                  class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none"
+                  placeholder="留空则不限制">
+              </div>
+            </div>
+            <button @click="saveConfig" class="mt-4 bg-accent hover:bg-accent-dark text-white px-6 py-2 rounded-lg text-sm font-medium transition">
+              保存配置
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ======== 用量统计页 ======== -->
+      <div v-if="currentPage === 'usage'">
+        <div class="flex items-center justify-between mb-5">
+          <h2 class="text-lg font-bold text-white">用量统计</h2>
+          <select v-model="usageDays" @change="loadUsage"
+            class="bg-panel-card border border-panel-border rounded-lg px-3 py-1.5 text-sm focus:border-accent focus:outline-none">
+            <option :value="7">最近 7 天</option>
+            <option :value="14">最近 14 天</option>
+            <option :value="30">最近 30 天</option>
+          </select>
+        </div>
+
+        <!-- 每日请求图表 (简易柱状图) -->
+        <div class="bg-panel-card border border-panel-border rounded-xl p-5 mb-4">
+          <h3 class="text-sm font-medium text-gray-400 mb-4">每日请求量</h3>
+          <div class="flex items-end gap-1 h-40" v-if="dailyStats.length">
+            <div v-for="(day, i) in dailyStats" :key="i"
+              class="flex-1 flex flex-col items-center justify-end gap-1">
+              <div class="text-[10px] text-gray-500">{{ day.requests }}</div>
+              <div class="w-full bg-accent/80 rounded-t transition-all duration-500"
+                :style="{ height: barHeight(day.requests, maxDailyRequests) + '%', minHeight: day.requests > 0 ? '4px' : '1px' }"></div>
+              <div class="text-[10px] text-gray-600 truncate w-full text-center">{{ day.date?.slice(5) }}</div>
+            </div>
+          </div>
+          <div v-else class="h-40 flex items-center justify-center text-gray-600 text-sm">暂无数据</div>
+        </div>
+
+        <!-- 每日 Tokens 图表 -->
+        <div class="bg-panel-card border border-panel-border rounded-xl p-5 mb-4">
+          <h3 class="text-sm font-medium text-gray-400 mb-4">每日 Token 消耗</h3>
+          <div class="flex items-end gap-1 h-40" v-if="dailyStats.length">
+            <div v-for="(day, i) in dailyStats" :key="i"
+              class="flex-1 flex flex-col items-center justify-end gap-1">
+              <div class="text-[10px] text-gray-500">{{ formatTokens((day.input_tokens||0)+(day.output_tokens||0)) }}</div>
+              <div class="w-full rounded-t transition-all duration-500 flex flex-col justify-end">
+                <div class="bg-blue-500/80 rounded-t" :style="{ height: barHeight(day.input_tokens||0, maxDailyTokens) + '%', minHeight: (day.input_tokens||0) > 0 ? '2px' : '0' }"></div>
+                <div class="bg-purple-500/80" :style="{ height: barHeight(day.output_tokens||0, maxDailyTokens) + '%', minHeight: (day.output_tokens||0) > 0 ? '2px' : '0' }"></div>
+              </div>
+              <div class="text-[10px] text-gray-600 truncate w-full text-center">{{ day.date?.slice(5) }}</div>
+            </div>
+          </div>
+          <div v-else class="h-40 flex items-center justify-center text-gray-600 text-sm">暂无数据</div>
+          <div class="flex gap-4 mt-2 justify-center">
+            <span class="flex items-center gap-1 text-[10px] text-gray-500"><span class="w-2 h-2 bg-blue-500 rounded-sm"></span>Input</span>
+            <span class="flex items-center gap-1 text-[10px] text-gray-500"><span class="w-2 h-2 bg-purple-500 rounded-sm"></span>Output</span>
+          </div>
+        </div>
+
+        <!-- 按账号统计 -->
+        <div class="bg-panel-card border border-panel-border rounded-xl p-5 mb-4">
+          <h3 class="text-sm font-medium text-gray-400 mb-4">按账号统计</h3>
+          <div v-if="accountUsage.length" class="space-y-2">
+            <div v-for="au in accountUsage" :key="au.account_id" class="flex items-center gap-3">
+              <span class="text-xs text-gray-400 w-24 truncate">{{ au.account_name || '账号 #' + au.account_id }}</span>
+              <div class="flex-1 bg-panel-bg rounded-full h-5 overflow-hidden">
+                <div class="h-full bg-accent/70 rounded-full flex items-center justify-end px-2 transition-all duration-500"
+                  :style="{ width: barHeight(au.requests, maxAccountRequests) + '%', minWidth: '40px' }">
+                  <span class="text-[10px] text-white">{{ au.requests }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-else class="text-center py-8 text-gray-600 text-sm">暂无数据</div>
+        </div>
+
+        <!-- 最近请求 -->
+        <div class="bg-panel-card border border-panel-border rounded-xl overflow-hidden">
+          <div class="px-5 py-3 border-b border-panel-border">
+            <h3 class="text-sm font-medium text-gray-400">最近请求</h3>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-xs">
+              <thead>
+                <tr class="border-b border-panel-border text-left">
+                  <th class="px-4 py-2 text-gray-500">时间</th>
+                  <th class="px-4 py-2 text-gray-500">账号</th>
+                  <th class="px-4 py-2 text-gray-500">模型</th>
+                  <th class="px-4 py-2 text-gray-500">Tokens</th>
+                  <th class="px-4 py-2 text-gray-500">耗时</th>
+                  <th class="px-4 py-2 text-gray-500">状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="req in recentRequests" :key="req.id" class="border-b border-panel-border/30">
+                  <td class="px-4 py-2 text-gray-400">{{ formatTime(req.created_at) }}</td>
+                  <td class="px-4 py-2 text-gray-300">{{ req.account_name || '#' + req.account_id }}</td>
+                  <td class="px-4 py-2 text-gray-300">{{ req.model }}</td>
+                  <td class="px-4 py-2 text-gray-400">{{ req.input_tokens }}↑ {{ req.output_tokens }}↓</td>
+                  <td class="px-4 py-2 text-gray-400">{{ (req.duration_ms/1000).toFixed(1) }}s</td>
+                  <td class="px-4 py-2">
+                    <span :class="req.status === 'success' ? 'text-green-400' : 'text-red-400'">
+                      {{ req.status === 'success' ? '成功' : '失败' }}
+                    </span>
+                  </td>
+                </tr>
+                <tr v-if="!recentRequests.length">
+                  <td colspan="6" class="px-4 py-8 text-center text-gray-600">暂无请求记录</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ======== 日志页 ======== -->
+      <div v-if="currentPage === 'logs'">
+        <div class="flex items-center justify-between mb-5">
+          <h2 class="text-lg font-bold text-white">系统日志</h2>
+          <div class="flex items-center gap-2">
+            <select v-model="logFilter"
+              class="bg-panel-card border border-panel-border rounded-lg px-3 py-1.5 text-xs focus:border-accent focus:outline-none">
+              <option value="">全部</option>
+              <option value="info">Info</option>
+              <option value="warn">Warn</option>
+              <option value="error">Error</option>
+              <option value="debug">Debug</option>
+            </select>
+            <button @click="clearLogs" class="text-xs text-gray-500 hover:text-gray-300 transition">清空</button>
+            <div class="flex items-center gap-1.5">
+              <span :class="['w-2 h-2 rounded-full', wsConnected ? 'bg-green-400 status-dot-online' : 'bg-red-400']"></span>
+              <span class="text-xs text-gray-500">{{ wsConnected ? '已连接' : '未连接' }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-panel-card border border-panel-border rounded-xl overflow-hidden">
+          <div ref="logContainer" class="h-[calc(100vh-200px)] overflow-y-auto p-4 font-mono text-xs space-y-0.5">
+            <div v-for="(log, i) in filteredLogs" :key="i"
+              :class="['py-0.5', 'log-' + log.level]">
+              <span class="text-gray-600">{{ log.time?.slice(11,19) }}</span>
+              <span :class="'log-' + log.level" class="ml-2 uppercase font-medium w-5 inline-block">{{ log.level?.slice(0,4) }}</span>
+              <span class="ml-2 text-gray-300">{{ log.msg }}</span>
+            </div>
+            <div v-if="!filteredLogs.length" class="text-gray-600 text-center py-12">暂无日志</div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- ============ 添加/编辑账号模态框 ============ -->
+  <transition name="fade">
+    <div v-if="showAccountModal" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+      @click.self="showAccountModal = false">
+      <div class="bg-panel-card border border-panel-border rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl">
+        <div class="px-6 py-4 border-b border-panel-border flex items-center justify-between">
+          <h3 class="text-base font-bold text-white">{{ editingAccount ? '编辑账号' : '添加账号' }}</h3>
+          <button @click="showAccountModal = false" class="text-gray-500 hover:text-gray-300 transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="p-6 space-y-4">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">名称</label>
+            <input v-model="accountForm.name" class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none" placeholder="账号备注名">
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Token 类型</label>
+            <select v-model="accountForm.token_type" class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none">
+              <option value="session_key">Session Key (Cookie)</option>
+              <option value="oauth">OAuth Token</option>
+            </select>
+          </div>
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-xs text-gray-500">Token</label>
+              <button v-if="accountForm.token_type === 'oauth'" @click="generateOAuthLink"
+                class="text-xs text-emerald-400 hover:text-emerald-300 transition flex items-center gap-1">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+                获取授权链接
+              </button>
+            </div>
+            <textarea v-model="accountForm.token" rows="3" class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none resize-none" :placeholder="accountForm.token_type === 'oauth' ? '点击上方「获取授权链接」，授权后将 Token 粘贴到这里' : '粘贴你的 Session Key (Cookie)'"></textarea>
+            <!-- Session Key 获取说明 -->
+            <div v-if="accountForm.token_type === 'session_key'" class="mt-2 bg-panel-bg border border-panel-border rounded-lg p-3">
+              <p class="text-xs text-gray-400 font-medium mb-2">📝 如何获取 Session Key：</p>
+              <ol class="text-xs text-gray-500 space-y-1.5 list-decimal list-inside">
+                <li>在浏览器中登录 <a href="https://claude.ai" target="_blank" class="text-accent hover:underline">claude.ai</a></li>
+                <li>按 <kbd class="bg-panel-border px-1.5 py-0.5 rounded text-gray-400">F12</kbd> 打开开发者工具</li>
+                <li>切换到 <span class="text-gray-300">Application</span> 标签</li>
+                <li>左侧展开 <span class="text-gray-300">Cookies</span> → <span class="text-gray-300">https://claude.ai</span></li>
+                <li>找到名为 <code class="text-emerald-400 bg-panel-border px-1 rounded">sessionKey</code> 的条目</li>
+                <li>双击 Value 列复制值，粘贴到上方输入框</li>
+              </ol>
+              <p class="text-xs text-yellow-500/80 mt-2">⚠️ Session Key 通常几天~两周过期，需定期更新</p>
+            </div>
+            <!-- OAuth 授权链接显示区 -->
+            <div v-if="oauthLinkUrl" class="mt-2 bg-panel-bg border border-emerald-500/30 rounded-lg p-3 space-y-3">
+              <p class="text-xs text-gray-400">第 1 步：复制链接到已登录 Claude 的浏览器中打开</p>
+              <p class="text-xs text-emerald-400 font-mono break-all select-all leading-relaxed">{{ oauthLinkUrl }}</p>
+              <button @click="copyOAuthLink" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-md transition flex items-center gap-1">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                复制链接
+              </button>
+              <hr class="border-panel-border">
+              <p class="text-xs text-gray-400">第 2 步：授权后页面会显示一个 Code，粘贴到下方</p>
+              <div class="flex gap-2">
+                <input v-model="oauthCode" class="flex-1 bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none font-mono" placeholder="粘贴授权 Code">
+                <button @click="exchangeOAuthCode" :disabled="!oauthCode || oauthExchanging" class="bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-700 text-white px-4 py-2 rounded-lg text-xs font-medium transition">
+                  {{ oauthExchanging ? '交换中...' : '获取 Token' }}
+                </button>
+              </div>
+            </div>
+          </div>
+          <!-- 代理地址区域 -->
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <label class="block text-xs text-gray-500">代理地址</label>
+              <div class="flex bg-panel-bg rounded-full p-0.5 border border-panel-border">
+                <button @click="proxyMode = 'paste'" :class="proxyMode === 'paste' ? 'bg-accent text-white' : 'text-gray-400 hover:text-gray-200'" class="px-3 py-1 text-xs rounded-full transition font-medium">快速粘贴</button>
+                <button @click="proxyMode = 'manual'" :class="proxyMode === 'manual' ? 'bg-accent text-white' : 'text-gray-400 hover:text-gray-200'" class="px-3 py-1 text-xs rounded-full transition font-medium">分开填写</button>
+              </div>
+            </div>
+            <!-- 快速粘贴模式 -->
+            <div v-if="proxyMode === 'paste'">
+              <div class="flex gap-2">
+                <input v-model="accountForm.proxy" @input="parseProxyUrl" class="flex-1 bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none" placeholder="socks5://user:pass@host:port">
+                <button @click="checkProxy" :disabled="proxyChecking || !accountForm.proxy" class="px-3 py-2 text-sm bg-panel-bg border border-panel-border rounded-lg hover:border-accent transition flex items-center gap-1 whitespace-nowrap disabled:opacity-40">
+                  <span v-if="proxyChecking" class="animate-spin">⏳</span>
+                  <span v-else>🔍</span> 检查
+                </button>
+              </div>
+            </div>
+            <!-- 分开填写模式 -->
+            <div v-else>
+              <div class="grid grid-cols-4 gap-2 mb-2">
+                <div>
+                  <select v-model="proxyFields.protocol" @change="buildProxyUrl" class="w-full bg-panel-bg border border-panel-border rounded-lg px-2 py-2 text-sm focus:border-accent focus:outline-none">
+                    <option value="socks5">socks5</option>
+                    <option value="socks5h">socks5h</option>
+                    <option value="http">http</option>
+                    <option value="https">https</option>
+                  </select>
+                </div>
+                <div class="col-span-2">
+                  <input v-model="proxyFields.host" @input="buildProxyUrl" class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none" placeholder="服务器地址">
+                </div>
+                <div>
+                  <input v-model.number="proxyFields.port" @input="buildProxyUrl" type="number" class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none" placeholder="端口">
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-2 mb-2">
+                <input v-model="proxyFields.username" @input="buildProxyUrl" class="bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none" placeholder="用户名（可选）">
+                <input v-model="proxyFields.password" @input="buildProxyUrl" type="password" class="bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none" placeholder="密码（可选）">
+              </div>
+              <div class="flex gap-2">
+                <input :value="accountForm.proxy" readonly class="flex-1 bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-xs text-gray-500 focus:outline-none" placeholder="自动拼接的代理 URL">
+                <button @click="checkProxy" :disabled="proxyChecking || !accountForm.proxy" class="px-3 py-2 text-sm bg-panel-bg border border-panel-border rounded-lg hover:border-accent transition flex items-center gap-1 whitespace-nowrap disabled:opacity-40">
+                  <span v-if="proxyChecking" class="animate-spin">⏳</span>
+                  <span v-else>🔍</span> 检查
+                </button>
+              </div>
+            </div>
+            <!-- 代理检查结果 -->
+            <div v-if="proxyCheckResult" class="mt-2 text-xs" :class="proxyCheckResult.error ? 'text-red-400' : 'text-emerald-400'">
+              <span v-if="proxyCheckResult.error">❌ {{ proxyCheckResult.error }}</span>
+              <span v-else>✅ {{ proxyCheckResult.ip }} ({{ proxyCheckResult.country }}{{ proxyCheckResult.city ? ', ' + proxyCheckResult.city : '' }}) · {{ proxyCheckResult.latency }}ms{{ proxyCheckResult.org ? ' · ' + proxyCheckResult.org : '' }}</span>
+            </div>
+          </div>
+          <div class="grid grid-cols-3 gap-3">
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">RPM</label>
+              <input v-model.number="accountForm.rpm" type="number" class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">最大并发</label>
+              <input v-model.number="accountForm.max_concurrency" type="number" class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">间隔(ms)</label>
+              <input v-model.number="accountForm.min_interval" type="number" class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none">
+            </div>
+          </div>
+
+          <!-- 指纹信息折叠 -->
+          <details class="group">
+            <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-400 transition flex items-center justify-between">
+              <span>高级选项 — 指纹信息</span>
+            </summary>
+            <div class="mt-3">
+              <div class="flex justify-end mb-2">
+                <button @click="randomizeFingerprint" class="text-xs text-gray-400 hover:text-accent transition flex items-center gap-1 bg-panel-bg border border-panel-border rounded-lg px-3 py-1.5">🎲 随机</button>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">OS</label>
+                  <select v-model="accountForm.fingerprint_os" @change="onFingerprintOsChange" class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none">
+                    <option value="">未设置</option>
+                    <option value="macOS">macOS</option>
+                    <option value="Windows_NT">Windows_NT</option>
+                    <option value="Linux">Linux</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">Arch</label>
+                  <select v-model="accountForm.fingerprint_arch" class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none">
+                    <option value="">未设置</option>
+                    <option value="arm64">arm64</option>
+                    <option value="x86_64">x86_64</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">Node</label>
+                  <select v-model="accountForm.fingerprint_node" class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none">
+                    <option value="">未设置</option>
+                    <option value="v22.14.0">v22.14.0</option>
+                    <option value="v22.13.0">v22.13.0</option>
+                    <option value="v22.12.0">v22.12.0</option>
+                    <option value="v20.18.1">v20.18.1</option>
+                    <option value="v20.17.0">v20.17.0</option>
+                  </select>
+                </div>
+                <div>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-xs text-gray-500">Claude Code 版本（伪装）</label>
+                    <button @click="fillLatestCCVersion" class="text-xs text-emerald-400 hover:text-emerald-300 transition">📥 最新版本</button>
+                  </div>
+                  <input v-model="accountForm.fingerprint_cc_version" class="w-full bg-panel-bg border border-panel-border rounded-lg px-3 py-2 text-sm focus:border-accent focus:outline-none" placeholder="2.1.78">
+                </div>
+              </div>
+            </div>
+          </details>
+        </div>
+        <div class="px-6 py-4 border-t border-panel-border flex justify-end gap-3">
+          <button @click="showAccountModal = false" class="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 transition">取消</button>
+          <button @click="saveAccount" class="bg-accent hover:bg-accent-dark text-white px-6 py-2 rounded-lg text-sm font-medium transition">
+            {{ editingAccount ? '保存' : '添加' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </transition>
+
+  <!-- ============ OAuth 授权链接模态框 ============ -->
+  <transition name="fade">
+    <div v-if="showOAuthModal" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+      @click.self="showOAuthModal = false">
+      <div class="bg-panel-card border border-panel-border rounded-2xl w-full max-w-lg shadow-2xl p-6">
+        <h3 class="text-base font-bold text-white mb-2 flex items-center gap-2">
+          <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+          OAuth 授权登录
+        </h3>
+        <p class="text-sm text-gray-400 mb-4">请复制以下链接，在<strong class="text-gray-300">已登录 Claude 账号</strong>的浏览器中打开完成授权：</p>
+        <div class="bg-panel-bg border border-panel-border rounded-lg p-3 mb-4">
+          <p class="text-xs text-emerald-400 font-mono break-all select-all leading-relaxed">{{ oauthUrl }}</p>
+        </div>
+        <div class="flex flex-col gap-3">
+          <button @click="copyOAuthUrl" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
+            复制链接
+          </button>
+          <p class="text-xs text-gray-500 text-center">授权完成后此页面会自动刷新，显示新添加的账号</p>
+          <button @click="showOAuthModal = false" class="w-full text-sm text-gray-400 hover:text-gray-200 py-2 transition">关闭</button>
+        </div>
+      </div>
+    </div>
+  </transition>
+
+  <!-- ============ 确认删除模态框 ============ -->
+  <transition name="fade">
+    <div v-if="showDeleteModal" class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+      @click.self="showDeleteModal = false">
+      <div class="bg-panel-card border border-panel-border rounded-2xl w-full max-w-sm shadow-2xl p-6">
+        <h3 class="text-base font-bold text-white mb-2">确认删除</h3>
+        <p class="text-sm text-gray-400 mb-6">确定要删除账号「{{ deletingAccount?.name || '账号 #' + deletingAccount?.id }}」吗？此操作不可撤销。</p>
+        <div class="flex justify-end gap-3">
+          <button @click="showDeleteModal = false" class="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 transition">取消</button>
+          <button @click="doDeleteAccount" class="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg text-sm font-medium transition">删除</button>
+        </div>
+      </div>
+    </div>
+  </transition>
+
+  <!-- ============ API Key 使用方法模态框 ============ -->
+  <transition name="fade">
+    <div v-if="usageModalVisible" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" @click.self="usageModalVisible = false">
+      <div class="bg-panel-card border border-panel-border rounded-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto shadow-2xl">
+        <div class="px-6 py-4 border-b border-panel-border flex items-center justify-between">
+          <h3 class="text-base font-bold text-white">📖 API Key 使用方法</h3>
+          <button @click="usageModalVisible = false" class="text-gray-500 hover:text-gray-300 transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="p-6">
+          <!-- Pill Tabs -->
+          <div class="flex bg-panel-bg rounded-full p-1 border border-panel-border mb-5">
+            <button v-for="tab in usageTabs" :key="tab.key"
+              @click="usageActiveTab = tab.key"
+              :class="['flex-1 px-4 py-2 text-sm rounded-full transition font-medium',
+                usageActiveTab === tab.key ? 'bg-accent text-white' : 'text-gray-400 hover:text-gray-200']">
+              {{ tab.label }}
+            </button>
+          </div>
+
+          <!-- Tab: Claude Code -->
+          <div v-if="usageActiveTab === 'claude-code'">
+            <div class="relative">
+              <button @click="copyToClipboard(usageClaudeCodeSnippet)" class="absolute top-3 right-3 text-gray-500 hover:text-gray-300 transition text-xs bg-panel-card/80 px-2 py-1 rounded-md border border-panel-border/50 z-10">📋 复制</button>
+              <pre class="bg-[#0d1117] rounded-xl p-5 text-sm font-mono text-gray-300 overflow-x-auto border border-panel-border/30 leading-relaxed"><code>{{ usageClaudeCodeSnippet }}</code></pre>
+            </div>
+          </div>
+
+          <!-- Tab: sub2api -->
+          <div v-if="usageActiveTab === 'sub2api'">
+            <div class="relative">
+              <button @click="copyToClipboard(usageSub2apiSnippet)" class="absolute top-3 right-3 text-gray-500 hover:text-gray-300 transition text-xs bg-panel-card/80 px-2 py-1 rounded-md border border-panel-border/50 z-10">📋 复制</button>
+              <pre class="bg-[#0d1117] rounded-xl p-5 text-sm font-mono text-gray-300 overflow-x-auto border border-panel-border/30 leading-relaxed"><code>{{ usageSub2apiSnippet }}</code></pre>
+            </div>
+          </div>
+
+          <!-- Tab: curl -->
+          <div v-if="usageActiveTab === 'curl'">
+            <div class="relative">
+              <button @click="copyToClipboard(usageCurlSnippet)" class="absolute top-3 right-3 text-gray-500 hover:text-gray-300 transition text-xs bg-panel-card/80 px-2 py-1 rounded-md border border-panel-border/50 z-10">📋 复制</button>
+              <pre class="bg-[#0d1117] rounded-xl p-5 text-sm font-mono text-gray-300 overflow-x-auto border border-panel-border/30 leading-relaxed"><code>{{ usageCurlSnippet }}</code></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </transition>
+
+  <!-- ============ Toast 通知 ============ -->
+  <div class="fixed top-4 right-4 z-[60] space-y-2">
+    <transition-group name="toast">
+      <div v-for="toast in toasts" :key="toast.id"
+        :class="['px-4 py-3 rounded-xl text-sm shadow-lg border max-w-sm',
+          toast.type === 'success' ? 'bg-green-500/10 border-green-500/30 text-green-400' :
+          toast.type === 'error' ? 'bg-red-500/10 border-red-500/30 text-red-400' :
+          'bg-blue-500/10 border-blue-500/30 text-blue-400']">
+        {{ toast.message }}
+      </div>
+    </transition-group>
+  </div>
+</div>
+
+<script>
+const { createApp, ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } = Vue;
+
+createApp({
+  setup() {
+    // ============ 状态 ============
+    const authenticated = ref(false);
+    const loginToken = ref('');
+    const loginError = ref('');
+    const adminToken = ref('');
+    const currentPage = ref('overview');
+
+    // 数据
+    const overview = ref({});
+    const accounts = ref([]);
+    const configForm = reactive({});
+    const apiKeys = ref([]);
+    const dailyStats = ref([]);
+    const accountUsage = ref([]);
+    const recentRequests = ref([]);
+    const logs = ref([]);
+    const usageDays = ref(7);
+    const logFilter = ref('');
+
+    // UI 状态
+    const showAccountModal = ref(false);
+    const showDeleteModal = ref(false);
+    const editingAccount = ref(null);
+    const deletingAccount = ref(null);
+    const accountForm = reactive({
+      name: '', token_type: 'session_key', token: '', proxy: '',
+      rpm: 10, max_concurrency: 2, min_interval: 3000,
+      fingerprint_os: '', fingerprint_arch: '', fingerprint_node: '',
+      fingerprint_cc_version: '2.1.78',
+    });
+
+    // 代理相关状态
+    const proxyMode = ref('paste');
+    const proxyFields = reactive({ protocol: 'socks5', host: '', port: '', username: '', password: '' });
+    const proxyChecking = ref(false);
+    const proxyCheckResult = ref(null);
+
+    const newKeyName = ref('');
+    const newKeyValue = ref('');
+    const toasts = ref([]);
+
+    // 系统信息
+    const baseUrl = computed(() => {
+      const host = window.location.host;
+      const protocol = window.location.protocol;
+      return `${protocol}//${host}`;
+    });
+
+    // API Key 使用方法模态框
+    const usageModalVisible = ref(false);
+    const usageActiveTab = ref('claude-code');
+    const usageModalKey = ref(null);
+    const usageTabs = [
+      { key: 'claude-code', label: 'Claude Code' },
+      { key: 'sub2api', label: 'sub2api' },
+      { key: 'curl', label: 'curl 测试' },
+    ];
+
+    const usageClaudeCodeSnippet = computed(() => {
+      const host = window.location.host;
+      const protocol = window.location.protocol;
+      const key = usageModalKey.value?.key || 'sk-bridge-xxxxx';
+      return `# 环境变量方式
+export ANTHROPIC_BASE_URL=${protocol}//${host}
+export ANTHROPIC_API_KEY=${key}
+
+# 然后直接运行
+claude`;
+    });
+
+    const usageSub2apiSnippet = computed(() => {
+      const host = window.location.host;
+      const protocol = window.location.protocol;
+      const key = usageModalKey.value?.key || 'sk-bridge-xxxxx';
+      return `Base URL: ${protocol}//${host}
+API Key: ${key}
+类型: Claude Console - API Key`;
+    });
+
+    const usageCurlSnippet = computed(() => {
+      const host = window.location.host;
+      const protocol = window.location.protocol;
+      const key = usageModalKey.value?.key || 'sk-bridge-xxxxx';
+      return `curl ${protocol}//${host}/v1/messages \\
+  -H "Content-Type: application/json" \\
+  -H "x-api-key: ${key}" \\
+  -H "anthropic-version: 2023-06-01" \\
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 1024,
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'`;
+    });
+
+    function showUsageModal(key) {
+      usageModalKey.value = key;
+      usageActiveTab.value = 'claude-code';
+      usageModalVisible.value = true;
+    }
+
+    // Claude Code 版本比较
+    function isNewerVersion(latestVersion) {
+      // 从所有账号的 fingerprint_cc_version 中找当前使用的版本
+      const currentVersions = accounts.value
+        .map(a => a.fingerprint_cc_version)
+        .filter(Boolean);
+      if (!currentVersions.length) return false;
+      // 比较最新版本和当前使用的最大版本
+      const maxCurrent = currentVersions.sort((a, b) => {
+        const pa = a.split('.').map(Number);
+        const pb = b.split('.').map(Number);
+        for (let i = 0; i < 3; i++) {
+          if ((pa[i] || 0) !== (pb[i] || 0)) return (pb[i] || 0) - (pa[i] || 0);
+        }
+        return 0;
+      })[0];
+      if (!maxCurrent || !latestVersion) return false;
+      const pa = latestVersion.split('.').map(Number);
+      const pb = maxCurrent.split('.').map(Number);
+      for (let i = 0; i < 3; i++) {
+        if ((pa[i] || 0) > (pb[i] || 0)) return true;
+        if ((pa[i] || 0) < (pb[i] || 0)) return false;
+      }
+      return false;
+    }
+
+    // API Key 管理状态
+    const keyVisibility = reactive({});
+    const showNewKeyModal = ref(false);
+    const newGeneratedKey = ref('');
+    const showAllowedAccountsModal = ref(false);
+    const showDeleteKeyModal = ref(false);
+    const deletingKey = ref(null);
+    const editingKeyId = ref(null);
+    const allowAllAccounts = ref(true);
+    const selectedAllowedAccounts = ref([]);
+    const wsConnected = ref(false);
+    const logContainer = ref(null);
+
+    let ws = null;
+    let refreshTimer = null;
+
+    // ============ 导航 ============
+    const navItems = [
+      { key: 'overview', label: '概览', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>' },
+      { key: 'accounts', label: '账号管理', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>' },
+      { key: 'config', label: '配置', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>' },
+      { key: 'usage', label: '用量统计', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>' },
+      { key: 'logs', label: '日志', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>' },
+    ];
+
+    // ============ API 工具 ============
+    const headers = () => ({
+      'Content-Type': 'application/json',
+      'X-Admin-Token': adminToken.value,
+    });
+
+    async function api(method, url, body) {
+      try {
+        const opts = { method, headers: headers() };
+        if (body) opts.body = JSON.stringify(body);
+        const res = await fetch(url, opts);
+        if (res.status === 401) {
+          authenticated.value = false;
+          throw new Error('认证失败');
+        }
+        return await res.json();
+      } catch (err) {
+        showToast(err.message, 'error');
+        throw err;
+      }
+    }
+
+    // ============ 登录/登出 ============
+    function login() {
+      adminToken.value = loginToken.value;
+      // 尝试请求
+      api('GET', '/api/overview').then(() => {
+        authenticated.value = true;
+        loginError.value = '';
+        localStorage.setItem('cb_token', adminToken.value);
+        loadAll();
+        connectWS();
+        startRefresh();
+      }).catch(() => {
+        loginError.value = 'Token 无效或服务不可用';
+        authenticated.value = false;
+      });
+    }
+
+    function logout() {
+      authenticated.value = false;
+      adminToken.value = '';
+      localStorage.removeItem('cb_token');
+      if (ws) ws.close();
+      if (refreshTimer) clearInterval(refreshTimer);
+    }
+
+    // ============ 数据加载 ============
+    async function loadOverview() {
+      overview.value = await api('GET', '/api/overview');
+    }
+
+    async function loadAccounts() {
+      accounts.value = await api('GET', '/api/accounts');
+    }
+
+    async function loadConfig() {
+      const cfg = await api('GET', '/api/config');
+      Object.assign(configForm, cfg);
+    }
+
+    async function loadApiKeys() {
+      apiKeys.value = await api('GET', '/api/keys');
+    }
+
+    async function loadUsage() {
+      const [daily, byAccount, recent] = await Promise.all([
+        api('GET', `/api/usage/daily?days=${usageDays.value}`),
+        api('GET', `/api/usage/accounts?days=${usageDays.value}`),
+        api('GET', '/api/usage/recent?limit=50'),
+      ]);
+      dailyStats.value = daily;
+      accountUsage.value = byAccount;
+      recentRequests.value = recent;
+    }
+
+    function loadAll() {
+      loadOverview().catch(() => {});
+      loadAccounts().catch(() => {});
+      loadConfig().catch(() => {});
+      loadApiKeys().catch(() => {});
+      loadUsage().catch(() => {});
+    }
+
+    function startRefresh() {
+      refreshTimer = setInterval(() => {
+        if (currentPage.value === 'overview') loadOverview().catch(() => {});
+      }, 10000);
+    }
+
+    // ============ WebSocket 日志 ============
+    function connectWS() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${proto}://${location.host}/api/logs/ws?token=${adminToken.value}`);
+      ws.onopen = () => { wsConnected.value = true; };
+      ws.onclose = () => {
+        wsConnected.value = false;
+        setTimeout(connectWS, 3000);
+      };
+      ws.onmessage = (e) => {
+        try {
+          const entry = JSON.parse(e.data);
+          logs.value.push(entry);
+          if (logs.value.length > 2000) logs.value.splice(0, 500);
+          // 自动滚动
+          if (currentPage.value === 'logs') {
+            nextTick(() => {
+              const el = logContainer.value;
+              if (el) el.scrollTop = el.scrollHeight;
+            });
+          }
+        } catch (err) {}
+      };
+    }
+
+    // ============ 账号操作 ============
+    function openAddAccount() {
+      editingAccount.value = null;
+      Object.assign(accountForm, {
+        name: '', token_type: 'session_key', token: '', proxy: '',
+        rpm: 10, max_concurrency: 2, min_interval: 3000,
+        fingerprint_os: 'macOS', fingerprint_arch: 'arm64', fingerprint_node: 'v22.14.0',
+        fingerprint_cc_version: '2.1.78',
+      });
+      proxyMode.value = 'paste';
+      Object.assign(proxyFields, { protocol: 'socks5', host: '', port: '', username: '', password: '' });
+      proxyCheckResult.value = null;
+      oauthLinkUrl.value = '';
+      showAccountModal.value = true;
+    }
+
+    function openEditAccount(acc) {
+      editingAccount.value = acc;
+      Object.assign(accountForm, {
+        name: acc.name, token_type: acc.token_type, token: acc.token,
+        proxy: acc.proxy || '', rpm: acc.rpm, max_concurrency: acc.max_concurrency,
+        min_interval: acc.min_interval, fingerprint_os: acc.fingerprint_os || '',
+        fingerprint_arch: acc.fingerprint_arch || '', fingerprint_node: acc.fingerprint_node || '',
+        fingerprint_cc_version: acc.fingerprint_cc_version || '2.1.78',
+      });
+      proxyMode.value = 'paste';
+      proxyCheckResult.value = null;
+      // Parse existing proxy URL into fields
+      if (acc.proxy) {
+        parseProxyUrl();
+      } else {
+        Object.assign(proxyFields, { protocol: 'socks5', host: '', port: '', username: '', password: '' });
+      }
+      oauthLinkUrl.value = '';
+      showAccountModal.value = true;
+    }
+
+    async function saveAccount() {
+      try {
+        if (!accountForm.token) {
+          showToast('Token 不能为空', 'error');
+          return;
+        }
+        if (editingAccount.value) {
+          await api('PUT', `/api/accounts/${editingAccount.value.id}`, accountForm);
+          showToast('账号已更新', 'success');
+        } else {
+          await api('POST', '/api/accounts', accountForm);
+          showToast('账号已添加', 'success');
+        }
+        showAccountModal.value = false;
+        loadAccounts();
+        loadOverview();
+      } catch (err) {}
+    }
+
+    async function toggleAccount(acc) {
+      await api('PUT', `/api/accounts/${acc.id}`, { enabled: acc.enabled ? 0 : 1 });
+      showToast(acc.enabled ? '已禁用' : '已启用', 'success');
+      loadAccounts();
+      loadOverview();
+    }
+
+    async function testAccount(id) {
+      showToast('正在测试...', 'info');
+      const result = await api('POST', `/api/accounts/${id}/test`);
+      showToast(result.success ? '连接正常 ✓' : `连接失败: ${result.message}`, result.success ? 'success' : 'error');
+    }
+
+    async function restartAccount(id) {
+      await api('POST', `/api/accounts/${id}/restart`);
+      showToast('已重启', 'success');
+      setTimeout(() => { loadAccounts(); loadOverview(); }, 2000);
+    }
+
+    // OAuth 授权登录
+    const oauthUrl = ref('');
+    const showOAuthModal = ref(false);
+    const oauthLinkUrl = ref('');
+    const oauthCode = ref('');
+    const oauthExchanging = ref(false);
+    const oauthState = ref('');
+
+    async function startOAuth() {
+      try {
+        showToast('正在生成授权链接...', 'info');
+        const result = await api('GET', '/api/oauth/start');
+        if (!result || !result.url) {
+          showToast('获取授权 URL 失败', 'error');
+          return;
+        }
+        oauthUrl.value = result.url;
+        showOAuthModal.value = true;
+      } catch (err) {
+        showToast('OAuth 启动失败: ' + (err.message || '未知错误'), 'error');
+      }
+    }
+
+    function copyOAuthUrl() {
+      copyToClipboard(oauthUrl.value).then(() => {}).catch(() => {});
+    }
+
+    async function generateOAuthLink() {
+      try {
+        const proxy = accountForm.proxy || '';
+        const query = proxy ? `?proxy=${encodeURIComponent(proxy)}` : '';
+        const result = await api('GET', `/api/oauth/start${query}`);
+        if (result && result.url) {
+          oauthLinkUrl.value = result.url;
+          oauthState.value = result.state;
+          oauthCode.value = '';
+          showToast('授权链接已生成，请复制到已登录 Claude 的浏览器中打开', 'success');
+        }
+      } catch (err) {
+        showToast('生成授权链接失败: ' + (err.message || ''), 'error');
+      }
+    }
+
+    async function exchangeOAuthCode() {
+      if (!oauthCode.value || !oauthState.value) return;
+      oauthExchanging.value = true;
+      try {
+        const result = await api('POST', '/api/oauth/exchange', {
+          code: oauthCode.value.trim(),
+          state: oauthState.value,
+        });
+        if (result.error) {
+          showToast('交换失败: ' + result.error, 'error');
+          return;
+        }
+        if (result.token) {
+          accountForm.token = result.token;
+          accountForm.auth_type = 'oauth';
+          oauthLinkUrl.value = '';
+          oauthCode.value = '';
+          showToast('Token 获取成功！已自动填入', 'success');
+        }
+      } catch (err) {
+        showToast('交换失败: ' + (err.message || ''), 'error');
+      } finally {
+        oauthExchanging.value = false;
+      }
+    }
+
+    function copyOAuthLink() {
+      copyToClipboard(oauthLinkUrl.value).then(() => {}).catch(() => {});
+    }
+
+    // ============ 代理工具 ============
+    function parseProxyUrl() {
+      const url = accountForm.proxy;
+      proxyCheckResult.value = null;
+      if (!url) return;
+      try {
+        // Parse: protocol://user:pass@host:port
+        const match = url.match(/^(https?|socks5h?):\/\/(?:([^:@]+):([^@]+)@)?([^:]+):(\d+)\/?$/);
+        if (match) {
+          proxyFields.protocol = match[1];
+          proxyFields.username = match[2] || '';
+          proxyFields.password = match[3] || '';
+          proxyFields.host = match[4];
+          proxyFields.port = parseInt(match[5]);
+        }
+      } catch (e) {}
+    }
+
+    function buildProxyUrl() {
+      proxyCheckResult.value = null;
+      const { protocol, host, port, username, password } = proxyFields;
+      if (!host || !port) { accountForm.proxy = ''; return; }
+      const auth = username ? `${username}${password ? ':' + password : ''}@` : '';
+      accountForm.proxy = `${protocol}://${auth}${host}:${port}`;
+    }
+
+    // 端口变化时智能推荐协议
+    function onProxyPortChange() {
+      const port = proxyFields.port;
+      if (port === 1080 || port === 11080 || port === 7891) {
+        proxyFields.protocol = 'socks5';
+      } else if (port === 8080 || port === 18080 || port === 3128 || port === 7890) {
+        proxyFields.protocol = 'http';
+      }
+      buildProxyUrl();
+    }
+
+    async function checkProxy() {
+      if (!accountForm.proxy) return;
+      proxyChecking.value = true;
+      proxyCheckResult.value = null;
+      try {
+        const result = await api('POST', '/api/proxy/check', { proxy: accountForm.proxy });
+        proxyCheckResult.value = result;
+      } catch (err) {
+        proxyCheckResult.value = { error: err.message || '检查失败' };
+      } finally {
+        proxyChecking.value = false;
+      }
+    }
+
+    // ============ 指纹工具 ============
+    function onFingerprintOsChange() {
+      const os = accountForm.fingerprint_os;
+      if (os === 'macOS') accountForm.fingerprint_arch = 'arm64';
+      else if (os === 'Windows_NT' || os === 'Linux') accountForm.fingerprint_arch = 'x86_64';
+    }
+
+    function randomizeFingerprint() {
+      const combos = [
+        { os: 'macOS', arch: 'arm64' },
+        { os: 'macOS', arch: 'x86_64' },
+        { os: 'Windows_NT', arch: 'x86_64' },
+        { os: 'Linux', arch: 'x86_64' },
+        { os: 'Linux', arch: 'arm64' },
+      ];
+      const combo = combos[Math.floor(Math.random() * combos.length)];
+      accountForm.fingerprint_os = combo.os;
+      accountForm.fingerprint_arch = combo.arch;
+
+      const nodeVersions = ['v22.14.0', 'v22.13.0', 'v22.12.0', 'v20.18.1', 'v20.17.0'];
+      accountForm.fingerprint_node = nodeVersions[Math.floor(Math.random() * nodeVersions.length)];
+
+      const ccMinor = 70 + Math.floor(Math.random() * 11); // 70~80
+      accountForm.fingerprint_cc_version = `2.1.${ccMinor}`;
+    }
+
+    async function fillLatestCCVersion() {
+      try {
+        const data = await api('GET', '/api/overview');
+        if (data && data.latestClaudeCodeVersion) {
+          accountForm.fingerprint_cc_version = data.latestClaudeCodeVersion;
+          showToast(`已填入最新版本: ${data.latestClaudeCodeVersion}`, 'success');
+        } else {
+          showToast('未获取到最新版本', 'error');
+        }
+      } catch (err) {
+        showToast('获取失败: ' + (err.message || ''), 'error');
+      }
+    }
+
+    function confirmDeleteAccount(acc) {
+      deletingAccount.value = acc;
+      showDeleteModal.value = true;
+    }
+
+    async function doDeleteAccount() {
+      await api('DELETE', `/api/accounts/${deletingAccount.value.id}`);
+      showToast('已删除', 'success');
+      showDeleteModal.value = false;
+      loadAccounts();
+      loadOverview();
+    }
+
+    // ============ 配置操作 ============
+    async function saveConfig() {
+      await api('PUT', '/api/config', configForm);
+      showToast('配置已保存', 'success');
+    }
+
+    async function addNewApiKey() {
+      if (!newKeyName.value.trim()) { showToast('请输入 Key 名称', 'error'); return; }
+      try {
+        const result = await api('POST', '/api/keys', { name: newKeyName.value.trim() });
+        if (result.error) { showToast(result.error, 'error'); return; }
+        newKeyName.value = '';
+        newGeneratedKey.value = result.key;
+        showNewKeyModal.value = true;
+        loadApiKeys();
+      } catch (e) { /* handled by api() */ }
+    }
+
+    function confirmDeleteKey(key) {
+      deletingKey.value = key;
+      showDeleteKeyModal.value = true;
+    }
+
+    async function doDeleteKey() {
+      if (!deletingKey.value) return;
+      try {
+        await api('DELETE', `/api/keys/${deletingKey.value.id}`);
+        showToast('Key 已删除', 'success');
+        showDeleteKeyModal.value = false;
+        deletingKey.value = null;
+        loadApiKeys();
+      } catch (e) { /* handled by api() */ }
+    }
+
+    function toggleKeyVisibility(id) {
+      keyVisibility[id] = !keyVisibility[id];
+    }
+
+    function maskKeyLong(key) {
+      if (!key || key.length < 14) return '****';
+      return key.slice(0, 10) + '····' + key.slice(-4);
+    }
+
+    async function copyToClipboard(text) {
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        showToast('已复制到剪贴板', 'success');
+      } catch { showToast('复制失败', 'error'); }
+    }
+
+    function openAllowedAccountsEditor(key) {
+      editingKeyId.value = key.id;
+      if (key.allowed_accounts === '*') {
+        allowAllAccounts.value = true;
+        selectedAllowedAccounts.value = [];
+      } else {
+        allowAllAccounts.value = false;
+        selectedAllowedAccounts.value = key.allowed_accounts.split(',').map(Number).filter(Boolean);
+      }
+      showAllowedAccountsModal.value = true;
+    }
+
+    function onAllowAllChange() {
+      if (allowAllAccounts.value) {
+        selectedAllowedAccounts.value = [];
+      }
+    }
+
+    function onAccountSelectChange() {
+      if (selectedAllowedAccounts.value.length > 0) {
+        allowAllAccounts.value = false;
+      }
+    }
+
+    async function saveAllowedAccounts() {
+      const val = allowAllAccounts.value ? '*' : selectedAllowedAccounts.value.join(',');
+      try {
+        await api('PUT', `/api/keys/${editingKeyId.value}`, { allowed_accounts: val || '*' });
+        showToast('已更新允许账号', 'success');
+        showAllowedAccountsModal.value = false;
+        loadApiKeys();
+      } catch (e) { /* handled by api() */ }
+    }
+
+    // ============ 工具函数 ============
+    const totalTodayTokens = computed(() =>
+      (overview.value.today?.input_tokens || 0) + (overview.value.today?.output_tokens || 0)
+    );
+
+    const maxDailyRequests = computed(() =>
+      Math.max(...dailyStats.value.map(d => d.requests || 0), 1)
+    );
+
+    const maxDailyTokens = computed(() =>
+      Math.max(...dailyStats.value.map(d => (d.input_tokens || 0) + (d.output_tokens || 0)), 1)
+    );
+
+    const maxAccountRequests = computed(() =>
+      Math.max(...accountUsage.value.map(a => a.requests || 0), 1)
+    );
+
+    const filteredLogs = computed(() => {
+      if (!logFilter.value) return logs.value;
+      return logs.value.filter(l => l.level === logFilter.value);
+    });
+
+    function barHeight(value, max) {
+      return max > 0 ? Math.round((value / max) * 100) : 0;
+    }
+
+    function statusColor(s) {
+      return { online: 'bg-green-400 status-dot-online', offline: 'bg-gray-500', rate_limited: 'bg-amber-400', error: 'bg-red-400' }[s] || 'bg-gray-500';
+    }
+
+    function statusBadge(s) {
+      return { online: 'bg-green-400/10 text-green-400', offline: 'bg-gray-400/10 text-gray-400', rate_limited: 'bg-amber-400/10 text-amber-400', error: 'bg-red-400/10 text-red-400' }[s] || 'bg-gray-400/10 text-gray-400';
+    }
+
+    function statusText(s) {
+      return { online: '在线', offline: '离线', rate_limited: '限速中', error: '异常' }[s] || s;
+    }
+
+    function formatTokens(n) {
+      if (!n) return '0';
+      if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+      return String(n);
+    }
+
+    function timeAgo(t) {
+      if (!t) return '';
+      const diff = (Date.now() - new Date(t + 'Z').getTime()) / 1000;
+      if (diff < 60) return Math.round(diff) + '秒前';
+      if (diff < 3600) return Math.round(diff / 60) + '分钟前';
+      if (diff < 86400) return Math.round(diff / 3600) + '小时前';
+      return Math.round(diff / 86400) + '天前';
+    }
+
+    function formatTime(t) {
+      if (!t) return '';
+      return t.replace('T', ' ').slice(0, 19);
+    }
+
+    function maskKey(key) {
+      if (!key || key.length < 8) return '****';
+      return key.slice(0, 4) + '****' + key.slice(-4);
+    }
+
+    function clearLogs() {
+      logs.value = [];
+    }
+
+    // Toast
+    let toastId = 0;
+    function showToast(message, type = 'info') {
+      const id = ++toastId;
+      toasts.value.push({ id, message, type });
+      setTimeout(() => {
+        toasts.value = toasts.value.filter(t => t.id !== id);
+      }, 3000);
+    }
+
+    // ============ 生命周期 ============
+    onMounted(() => {
+      // 自动登录
+      const saved = localStorage.getItem('cb_token');
+      if (saved) {
+        adminToken.value = saved;
+        api('GET', '/api/overview').then(() => {
+          authenticated.value = true;
+          loadAll();
+          connectWS();
+          startRefresh();
+        }).catch(() => {
+          authenticated.value = false;
+        });
+      }
+
+      // 监听 OAuth 回调消息
+      window.addEventListener('message', (event) => {
+        if (event.data?.type === 'oauth-success') {
+          showToast('OAuth 授权成功，账号已添加！', 'success');
+          loadAccounts();
+          loadOverview();
+        } else if (event.data?.type === 'oauth-error') {
+          showToast('OAuth 授权失败: ' + (event.data.error || '未知错误'), 'error');
+        }
+      });
+    });
+
+    onUnmounted(() => {
+      if (ws) ws.close();
+      if (refreshTimer) clearInterval(refreshTimer);
+    });
+
+    // 页面切换时加载数据
+    watch(currentPage, (page) => {
+      if (page === 'overview') loadOverview().catch(() => {});
+      if (page === 'accounts') loadAccounts().catch(() => {});
+      if (page === 'config') { loadConfig().catch(() => {}); loadApiKeys().catch(() => {}); }
+      if (page === 'usage') loadUsage().catch(() => {});
+    });
+
+    return {
+      authenticated, loginToken, loginError, currentPage, navItems,
+      overview, accounts, configForm, apiKeys, dailyStats, accountUsage,
+      recentRequests, logs, usageDays, logFilter, logContainer,
+      showAccountModal, showDeleteModal, showOAuthModal, oauthUrl, editingAccount, deletingAccount,
+      accountForm, newKeyName, newKeyValue, toasts, wsConnected,
+      proxyMode, proxyFields, proxyChecking, proxyCheckResult,
+      totalTodayTokens, maxDailyRequests, maxDailyTokens, maxAccountRequests,
+      filteredLogs,
+      login, logout, loadUsage,
+      startOAuth, copyOAuthUrl, oauthLinkUrl, oauthCode, oauthExchanging, generateOAuthLink, copyOAuthLink, exchangeOAuthCode,
+      openAddAccount, openEditAccount, saveAccount, toggleAccount,
+      testAccount, restartAccount, confirmDeleteAccount, doDeleteAccount,
+      parseProxyUrl, buildProxyUrl, checkProxy, onProxyPortChange,
+      onFingerprintOsChange, randomizeFingerprint, fillLatestCCVersion,
+      saveConfig, addNewApiKey, confirmDeleteKey, doDeleteKey,
+      toggleKeyVisibility, maskKeyLong, copyToClipboard,
+      openAllowedAccountsEditor, onAllowAllChange, onAccountSelectChange, saveAllowedAccounts,
+      keyVisibility, showNewKeyModal, newGeneratedKey,
+      showAllowedAccountsModal, showDeleteKeyModal, deletingKey,
+      allowAllAccounts, selectedAllowedAccounts,
+      baseUrl, usageModalVisible, usageActiveTab, usageModalKey, usageTabs,
+      usageClaudeCodeSnippet, usageSub2apiSnippet, usageCurlSnippet,
+      showUsageModal, isNewerVersion,
+      barHeight, statusColor, statusBadge, statusText, formatTokens,
+      timeAgo, formatTime, maskKey, clearLogs, showToast,
+    };
+  },
+}).mount('#app');
+</script>
+</body>
+</html>

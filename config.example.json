@@ -1,0 +1,24 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 3456
+  },
+  "auth": {
+    "apiKey": "your-bridge-api-key"
+  },
+  "defaults": {
+    "rpm": 10,
+    "maxConcurrency": 2,
+    "minInterval": 3000,
+    "heartbeatInterval": 300000,
+    "sessionRefreshInterval": 43200000,
+    "cooldownDuration": 60000
+  },
+  "scheduler": {
+    "strategy": "least_connections",
+    "stickySession": false
+  },
+  "usage": {
+    "retentionDays": 30
+  }
+}
