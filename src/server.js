@@ -479,6 +479,7 @@ export async function createServer(config = {}) {
           'Accept': 'application/json, text/plain, */*',
           'User-Agent': 'axios/1.8.4',
           'anthropic-beta': 'oauth-2025-04-20',
+          'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify(reqBody),
       };
@@ -583,6 +584,7 @@ export async function createServer(config = {}) {
           'Accept': 'application/json, text/plain, */*',
           'User-Agent': 'axios/1.8.4',
           'anthropic-beta': 'oauth-2025-04-20',
+          'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify({
           grant_type: 'authorization_code',
