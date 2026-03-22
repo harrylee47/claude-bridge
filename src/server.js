@@ -55,20 +55,21 @@ const OAUTH_SCOPES_FULL = 'org:create_api_key user:profile user:inference user:s
 /**
  * 使用 curl 子进程进行 token 交换（绕过 Node.js TLS 指纹检测）
  */
-async function curlTokenExchange(body, proxyUrl) {
-  const { execSync } = await import('child_process');
-  const bodyStr = JSON.stringify(body).replace(/'/g, "'\\''"); // escape single quotes
-  let cmd = `curl -s -X POST "${OAUTH_TOKEN_URL}" ` +
-    `-H "Content-Type: application/json" ` +
-    `-H "anthropic-beta: oauth-2025-04-20" ` +
-    `-H "anthropic-version: 2023-06-01" ` +
-    
-    `-d '${bodyStr}'`;
+function curlTokenExchange(body, proxyUrl) {
+  const { execFileSync } = require('child_process');
+  const args = [
+    '-s', '--max-time', '30',
+    '-X', 'POST', OAUTH_TOKEN_URL,
+    '-H', 'Content-Type: application/json',
+    '-H', 'anthropic-beta: oauth-2025-04-20',
+    '-H', 'anthropic-version: 2023-06-01',
+    '-d', JSON.stringify(body),
+  ];
   if (proxyUrl) {
-    cmd += ` --proxy "${proxyUrl}"`;
+    args.push('--proxy', proxyUrl);
   }
-  logger.info({ proxy: proxyUrl || 'direct' }, 'OAuth token 交换 (curl)');
-  const result = execSync(cmd, { encoding: 'utf8', timeout: 30000 });
+  logger.info({ proxy: proxyUrl || 'direct', url: OAUTH_TOKEN_URL, bodyKeys: Object.keys(body) }, 'OAuth token 交换 (curl/execFileSync)');
+  const result = execFileSync('curl', args, { encoding: 'utf8', timeout: 35000 });
   logger.info({ curlResponse: result.substring(0, 500) }, 'curl 返回结果');
   const parsed = JSON.parse(result);
   if (parsed.error) {

@@ -42,29 +42,30 @@ async function refreshOAuthToken() {
   try {
     log('info', 'OAuth token 即将过期，正在刷新...');
 
-    const fetchOpts = {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        grant_type: 'refresh_token',
-        refresh_token: accountConfig.refreshToken,
-        client_id: OAUTH_CLIENT_ID,
-      }),
-    };
-    // token 刷新也走代理
+    // 用 curl 子进程刷新 token（绕过 Cloudflare TLS 检测）
+    const refreshBody = JSON.stringify({
+      grant_type: 'refresh_token',
+      refresh_token: accountConfig.refreshToken,
+      client_id: OAUTH_CLIENT_ID,
+    });
+    const curlArgs = [
+      '-s', '--max-time', '30',
+      '-X', 'POST', OAUTH_TOKEN_URL,
+      '-H', 'Content-Type: application/json',
+      '-H', 'anthropic-beta: oauth-2025-04-20',
+      '-H', 'anthropic-version: 2023-06-01',
+      '-d', refreshBody,
+    ];
     if (accountConfig.proxy) {
-      const agent = createProxyAgent(accountConfig.proxy);
-      if (agent) fetchOpts.agent = agent;
+      curlArgs.push('--proxy', accountConfig.proxy);
     }
-    const response = await nodeFetch(OAUTH_TOKEN_URL, fetchOpts);
-
-    if (!response.ok) {
-      const errBody = await response.text();
-      log('error', `OAuth token 刷新失败: ${response.status} - ${errBody}`);
+    const refreshResult = execFileSync('curl', curlArgs, { encoding: 'utf8', timeout: 35000 });
+    const data = JSON.parse(refreshResult);
+    
+    if (data.error) {
+      log('error', `OAuth token 刷新失败: ${JSON.stringify(data.error)}`);
       return false;
     }
-
-    const data = await response.json();
     const { access_token, refresh_token, expires_in } = data;
 
     if (!access_token) {
@@ -85,7 +86,7 @@ async function refreshOAuthToken() {
     const fpR = accountConfig.fingerprint || {};
     const ccVR = fpR.ccVersion || '2.1.78';
     const options = {
-      apiKey: access_token,
+      authToken: access_token,
       defaultHeaders: {
         'user-agent': `claude-cli/${ccVR} (external, cli)`,
         'x-stainless-lang': 'js',
@@ -365,7 +366,7 @@ async function initClient(config) {
   }
 
   const options = {
-    apiKey: token,
+    authToken: token,
   };
 
   // 应用指纹到请求头
