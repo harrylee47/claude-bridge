@@ -9,7 +9,7 @@ import { HttpsProxyAgent } from 'https-proxy-agent';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import nodeFetch from 'node-fetch';
 import crypto from 'crypto';
-import { execFile } from 'child_process';
+import { execFileSync } from 'child_process';
 
 let client = null;
 let accountConfig = null;
@@ -154,211 +154,165 @@ function startTokenRefresh() {
 // ========== Session Key → OAuth Token 转换 ==========
 
 /**
- * 用 Session Key (cookie) 请求 claude.ai API
+ * 执行 curl 子进程（同步），返回 stdout 字符串
+ * 所有 HTTP 请求都通过 curl 发出，绕过 Cloudflare TLS 指纹检测
  */
-async function fetchWithCookie(url, sessionKey, proxyUrl, options = {}) {
-  const agent = proxyUrl ? createProxyAgent(proxyUrl) : undefined;
-  const response = await nodeFetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'Cookie': `sessionKey=${sessionKey}`,
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      ...options.headers,
-    },
-    agent,
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`HTTP ${response.status}: ${body}`);
-  }
-  return response.json();
+function curlExec(args) {
+  return execFileSync('curl', args, { encoding: 'utf8', timeout: 35000 });
 }
 
 /**
- * 用 curl 子进程执行 HTTP 请求（绕过 TLS 指纹检测）
- * platform.claude.com 有 TLS 指纹检测，node-fetch 会被拦截
- */
-function curlRequest(url, options = {}) {
-  return new Promise((resolve, reject) => {
-    const args = ['-s', '-L'];
-
-    // 方法
-    if (options.method) {
-      args.push('-X', options.method);
-    }
-
-    // Headers
-    if (options.headers) {
-      for (const [key, value] of Object.entries(options.headers)) {
-        args.push('-H', `${key}: ${value}`);
-      }
-    }
-
-    // Body
-    if (options.body) {
-      args.push('-d', options.body);
-    }
-
-    // Proxy
-    if (options.proxy) {
-      args.push('--proxy', options.proxy);
-    }
-
-    // 不跟随重定向（需要从 Location header 提取 code）
-    if (options.noFollow) {
-      // 移除 -L，加上 -i 获取 headers
-      const idx = args.indexOf('-L');
-      if (idx !== -1) args.splice(idx, 1);
-      args.push('-i');
-    }
-
-    args.push(url);
-
-    execFile('curl', args, { maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) {
-        reject(new Error(`curl failed: ${err.message}\nstderr: ${stderr}`));
-        return;
-      }
-      resolve(stdout);
-    });
-  });
-}
-
-/**
- * 从 Session Key 自动获取 OAuth Token
+ * 从 Session Key 自动获取 OAuth Token（全程 curl，不需要浏览器）
  * 流程参考 sub2api 的 CookieAuth:
  * 1. 用 Session Key 获取 org UUID
  * 2. 生成 PKCE challenge
- * 3. 用 Session Key 自动获取 authorization code（不需要浏览器）
+ * 3. 用 Session Key 自动获取 authorization code
  * 4. 用 code 换取 OAuth access_token + refresh_token
  */
-async function sessionKeyToOAuth(sessionKey, proxyUrl) {
-  // Step 1: 获取组织信息
-  log('info', 'Session Key → OAuth: 正在获取组织信息...');
-  const orgs = await fetchWithCookie('https://claude.ai/api/organizations', sessionKey, proxyUrl);
-  if (!orgs || !orgs.length) {
-    throw new Error('Session Key 无效或已过期：无法获取组织信息');
+function sessionKeyLogin(config) {
+  const sessionKey = config.token;
+  const proxyUrl = config.proxy;
+
+  // 构建通用 curl 参数
+  function baseArgs() {
+    const args = ['-s', '--max-time', '30'];
+    if (proxyUrl) args.push('--proxy', proxyUrl);
+    return args;
   }
+
+  // Step 1: 获取组织 UUID
+  log('info', 'Session Key → OAuth: Step 1 - 获取组织信息...');
+  const step1Args = [
+    ...baseArgs(),
+    '-H', 'Accept: application/json',
+    '-H', 'Origin: https://claude.ai',
+    '-H', 'Referer: https://claude.ai/new',
+    '-H', 'Content-Type: application/json',
+    '-H', `Cookie: sessionKey=${sessionKey}`,
+    'https://claude.ai/api/organizations',
+  ];
+
+  let orgsRaw;
+  try {
+    orgsRaw = curlExec(step1Args);
+  } catch (err) {
+    throw new Error(`Step 1 curl 执行失败: ${err.message}`);
+  }
+
+  let orgs;
+  try {
+    orgs = JSON.parse(orgsRaw);
+  } catch {
+    throw new Error(`Step 1 返回无法解析的 JSON: ${orgsRaw.slice(0, 300)}`);
+  }
+
+  if (!Array.isArray(orgs) || orgs.length === 0 || !orgs[0].uuid) {
+    throw new Error(`Session Key 无效或已过期: ${orgsRaw.slice(0, 300)}`);
+  }
+
   const orgUUID = orgs[0].uuid;
   log('info', `Session Key → OAuth: 获取到 org UUID: ${orgUUID}`);
 
-  // Step 2: 生成 PKCE
+  // Step 2: 生成 PKCE 参数
   const codeVerifier = crypto.randomBytes(32).toString('base64url');
   const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
   const state = crypto.randomUUID();
 
-  // Step 3: 用 Session Key 自动获取 authorization code
-  log('info', 'Session Key → OAuth: 正在获取 authorization code...');
+  // Step 3: 获取 Authorization Code
+  log('info', 'Session Key → OAuth: Step 2 - 获取 authorization code...');
   const authBody = JSON.stringify({
-    client_id: OAUTH_CLIENT_ID,
     response_type: 'code',
+    client_id: OAUTH_CLIENT_ID,
+    organization_uuid: orgUUID,
     redirect_uri: 'https://platform.claude.com/oauth/code/callback',
     scope: 'user:profile user:inference user:sessions:claude_code user:mcp_servers',
+    state: state,
     code_challenge: codeChallenge,
     code_challenge_method: 'S256',
-    state: state,
-    org_uuid: orgUUID,
   });
 
-  // 先尝试 node-fetch（claude.ai 可能没有 TLS 检测）
-  let authCode = null;
+  const step2Args = [
+    ...baseArgs(),
+    '-X', 'POST',
+    '-H', 'Accept: application/json',
+    '-H', 'Accept-Language: en-US,en;q=0.9',
+    '-H', 'Cache-Control: no-cache',
+    '-H', 'Origin: https://claude.ai',
+    '-H', 'Referer: https://claude.ai/new',
+    '-H', 'Content-Type: application/json',
+    '-H', `Cookie: sessionKey=${sessionKey}`,
+    '-d', authBody,
+    `https://claude.ai/v1/oauth/${orgUUID}/authorize`,
+  ];
+
+  let authRaw;
   try {
-    const authResult = await fetchWithCookie(
-      'https://claude.ai/api/auth/oauth/authorize',
-      sessionKey,
-      proxyUrl,
-      { method: 'POST', body: authBody }
-    );
-    // 响应可能包含 redirect_uri 或 code
-    if (authResult.code) {
-      authCode = authResult.code;
-    } else if (authResult.redirect_uri) {
-      const url = new URL(authResult.redirect_uri);
-      authCode = url.searchParams.get('code');
-    }
+    authRaw = curlExec(step2Args);
   } catch (err) {
-    log('warn', `node-fetch 获取 auth code 失败: ${err.message}，尝试 curl...`);
+    throw new Error(`Step 2 curl 执行失败: ${err.message}`);
   }
 
-  // 如果 node-fetch 失败，用 curl（绕过 TLS 指纹）
-  if (!authCode) {
-    const curlHeaders = {
-      'Content-Type': 'application/json',
-      'Cookie': `sessionKey=${sessionKey}`,
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    };
-    const curlResult = await curlRequest('https://claude.ai/api/auth/oauth/authorize', {
-      method: 'POST',
-      headers: curlHeaders,
-      body: authBody,
-      proxy: proxyUrl,
-    });
+  let authResult;
+  try {
+    authResult = JSON.parse(authRaw);
+  } catch {
+    throw new Error(`Step 2 返回无法解析的 JSON: ${authRaw.slice(0, 300)}`);
+  }
 
-    // 尝试解析 JSON 响应
+  // 从 redirect_uri 中解析 code
+  let authCode = null;
+  if (authResult.code) {
+    authCode = authResult.code;
+  } else if (authResult.redirect_uri) {
     try {
-      const parsed = JSON.parse(curlResult);
-      if (parsed.code) {
-        authCode = parsed.code;
-      } else if (parsed.redirect_uri) {
-        const url = new URL(parsed.redirect_uri);
-        authCode = url.searchParams.get('code');
-      }
+      const redirectUrl = new URL(authResult.redirect_uri);
+      authCode = redirectUrl.searchParams.get('code');
     } catch {
-      // 可能是带 HTTP headers 的响应，尝试提取 JSON body
-      const jsonMatch = curlResult.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try {
-          const parsed = JSON.parse(jsonMatch[0]);
-          if (parsed.code) {
-            authCode = parsed.code;
-          } else if (parsed.redirect_uri) {
-            const url = new URL(parsed.redirect_uri);
-            authCode = url.searchParams.get('code');
-          }
-        } catch { /* ignore */ }
-      }
+      throw new Error(`Step 2 redirect_uri 解析失败: ${authResult.redirect_uri}`);
     }
   }
 
   if (!authCode) {
-    throw new Error('Session Key → OAuth: 无法获取 authorization code');
+    throw new Error(`Step 2 无法获取 authorization code: ${authRaw.slice(0, 300)}`);
   }
   log('info', 'Session Key → OAuth: 获取到 authorization code');
 
-  // Step 4: 用 code 换取 token
-  // platform.claude.com 有 TLS 指纹检测，必须用 curl
-  log('info', 'Session Key → OAuth: 正在交换 token...');
+  // Step 3: 交换 Token
+  log('info', 'Session Key → OAuth: Step 3 - 交换 token...');
   const tokenBody = JSON.stringify({
     grant_type: 'authorization_code',
     code: authCode,
-    code_verifier: codeVerifier,
-    client_id: OAUTH_CLIENT_ID,
     redirect_uri: 'https://platform.claude.com/oauth/code/callback',
+    client_id: OAUTH_CLIENT_ID,
+    code_verifier: codeVerifier,
   });
 
-  const tokenResult = await curlRequest(OAUTH_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: tokenBody,
-    proxy: proxyUrl,
-  });
+  const step3Args = [
+    ...baseArgs(),
+    '-X', 'POST',
+    '-H', 'Content-Type: application/json',
+    '-H', 'anthropic-beta: oauth-2025-04-20',
+    '-H', 'anthropic-version: 2023-06-01',
+    '-d', tokenBody,
+    OAUTH_TOKEN_URL,
+  ];
+
+  let tokenRaw;
+  try {
+    tokenRaw = curlExec(step3Args);
+  } catch (err) {
+    throw new Error(`Step 3 curl 执行失败: ${err.message}`);
+  }
 
   let tokenData;
   try {
-    tokenData = JSON.parse(tokenResult);
+    tokenData = JSON.parse(tokenRaw);
   } catch {
-    // 如果带 HTTP headers，提取 JSON body
-    const jsonMatch = tokenResult.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      tokenData = JSON.parse(jsonMatch[0]);
-    } else {
-      throw new Error(`Token 交换返回无法解析的响应: ${tokenResult.slice(0, 200)}`);
-    }
+    throw new Error(`Step 3 返回无法解析的 JSON: ${tokenRaw.slice(0, 300)}`);
   }
 
   if (!tokenData.access_token) {
-    throw new Error(`Token 交换失败: ${JSON.stringify(tokenData)}`);
+    throw new Error(`Step 3 token 交换失败: ${JSON.stringify(tokenData).slice(0, 300)}`);
   }
 
   log('info', 'Session Key → OAuth: Token 交换成功！');
@@ -378,11 +332,11 @@ async function initClient(config) {
 
   let token = config.token;
 
-  // 如果是 session_key 认证，先转换为 OAuth token
+  // 如果是 session_key 认证，自动转换为 OAuth token
   if (config.authType === 'session_key') {
     try {
       log('info', '检测到 Session Key 认证，正在转换为 OAuth Token...');
-      const oauthResult = await sessionKeyToOAuth(config.token, config.proxy);
+      const oauthResult = sessionKeyLogin(config);
 
       // 更新本地配置
       token = oauthResult.accessToken;
